@@ -1,0 +1,101 @@
+venv/
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+
+# Dependency directories
+node_modules/
+
+# Environment variables
+.env
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS specific
+.DS_Store
+
+# Task files
+#tasks.json
+#tasks/
+
+# ESP-IDF build directories
+build/
+sdkconfig
+sdkconfig.old
+
+# Compiled binaries and object files
+*.bin
+*.elf
+*.map
+*.a
+*.o
+*.d
+*.su
+*.s
+*.s.o
+*.s.obj
+*.s.o.d
+
+# Generated files
+
+# WiFi configuration
+main/wifi_config.h
+*~
+*.swp
+*.swo
+*.swn
+*.swm
+*.bak
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Project specific
+# (add any project-specific patterns here)
+
+# ESP-IDF managed components
+managed_components/
+
+# Partition table backup
+partitions.csv.bak
+
+# Backup files for the sdkconfig file
+sdkconfig.old
+
+# IDE specific files
+.vs/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux specific
+*~
+
+# ESP-IDF specific
+.gdb_history
+openocd*
+qemu_efuse_*.cursor/

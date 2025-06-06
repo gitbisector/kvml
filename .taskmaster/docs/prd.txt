@@ -1,0 +1,157 @@
+**Product Requirements Document (PRD): Dual ESP32-S3 Bluetooth HID Multiplexer**
+
+---
+
+**Project Title:**
+Dual ESP32-S3 Bluetooth HID Multiplexer
+
+**Objective:**
+Create a hardware solution that routes input from USB keyboards and mice to two separate computers via Bluetooth. The ESP32-S3 boards work together through UART, with configurable roles to handle HID communication with both hosts. The user can switch which host receives input through a virtual screen or web interface, emulating the functionality of Synergy software without needing a shared network.
+
+---
+
+**Key Features:**
+
+1. **Dual ESP32-S3 Board System with Configurable Roles:**
+
+   * ESP32-A: Primary controller with web UI, serves as master.
+   * ESP32-B: Secondary controller that forwards events to ESP32-A.
+   * UART link between boards for synchronization and data forwarding.
+   * Board roles configured via SPIFFS rather than USB device detection.
+
+2. **Bluetooth HID Interface:**
+
+   * Each ESP32-S3 can connect to multiple host computers simultaneously.
+   * Both boards act as composite HID devices (keyboard + mouse).
+   * BLE identity is static and tied to the board, not the connected USB device.
+
+3. **Flexible USB HID Device Handling:**
+
+   * Support for multi-interface HID devices (devices reporting as both keyboard and mouse).
+   * Board role determines routing rather than USB device type.
+   * Both boards can handle any type of HID device.
+
+4. **Input Routing Logic:**
+
+   * ESP32-A (primary controller) handles routing decisions.
+   * Decides which host is active based on screen region or manual override.
+   * Receives HID events from ESP32-B via UART when a device is connected there.
+   * Routes HID events to the appropriate host based on current active selection.
+
+5. **Web Configuration UI:**
+
+   * Hosted on the board configured as ESP32-A (primary).
+   * Functions include:
+
+     * Active host switching.
+     * Screen region configuration.
+     * Board role configuration (set which board is A/B).
+     * HID device information and status.
+     * OTA firmware upload.
+     * Debug/logging (optional).
+
+6. **OTA Firmware Updates:**
+
+   * Single firmware binary for both boards.
+   * ESP32-A updates itself via HTTP.
+   * ESP32-A updates ESP32-B over UART with custom OTA protocol.
+
+7. **UART Protocol:**
+
+   * Binary frame structure: preamble, type, length, payload, CRC16.
+   * Supports HID_EVENT, CONFIG_SYNC, ROLE_CONFIG, ACTIVE_HOST, OTA_*, etc.
+   * Enables secondary board (B) to forward HID events to primary board (A).
+   * Synchronizes configuration between boards.
+   * Optional ACK/retry mechanism.
+
+8. **BLE Implementation:**
+
+   * BLE functionality implemented only on the primary board (A).
+   * Static MAC address for reliable host reconnection.
+   * Fixed device name reflecting the board's role as primary controller.
+   * Support for connecting to multiple host computers simultaneously.
+   * BLE bonding information stored in NVS partition.
+   * Secondary board (B) forwards all HID events to primary board via UART.
+
+9. **State Synchronization:**
+
+   * Bidirectional event propagation via UART.
+   * Board roles and device capabilities shared between boards.
+   * Active host state tracked by primary board (A).
+   * Timer-based sanity checks.
+   * Automatic reconnection of BLE connections after role changes.
+
+10. **Configuration Storage:**
+
+   * SPIFFS-based configuration storage.
+   * JSON format configuration files.
+   * Persistent board role settings across power cycles.
+   * Fallback to default settings if configuration is corrupted.
+
+11. **Partitioning Scheme:**
+
+    * OTA-capable with dual app slots and SPIFFS for web content and configuration.
+    * Flash layout optimized for ESP32-S3 with 4MB flash:
+      * Bootloader (4KB): 0x0000 - 0x0FFF
+      * Partition table (4KB): 0x8000 - 0x8FFF
+      * NVS (16KB): 0x9000 - 0xCFFF (for BLE bonding and settings)
+      * PHY init (4KB): 0xD000 - 0xDFFF
+      * Factory app (1MB): 0x10000 - 0x10FFFF
+      * OTA data (8KB): ~0x110000 (tracks active OTA partition)
+      * OTA_0 (1MB): ~0x120000
+      * OTA_1 (1MB): ~0x220000
+      * Storage SPIFFS (896KB): ~0x320000 (for web UI and config files)
+
+---
+
+**Partition Table Specification:**
+
+| Name      | Type   | SubType  | Size      | Offset   | Purpose |
+| --------- | ------ | -------- | --------- | -------- | ------- |
+| factory   | app    | factory  | 1 MB      | 0x10000  | Factory app (initial deployment) |
+| otadata   | data   | ota      | 8 KB      | -        | OTA update tracking |
+| nvs       | data   | nvs      | 24 KB     | -        | BLE bonding, configuration |
+| phy_init  | data   | phy      | 4 KB      | -        | PHY initialization data |
+| ota_0     | app    | ota_0    | 1 MB    | -        | OTA firmware slot 1 |
+| ota_1     | app    | ota_1    | 1 MB    | -        | OTA firmware slot 2 |
+| spiffs    | data   | spiffs   | 512 KB    | -        | Web UI, config files |
+
+**Notes:**
+- All partitions are automatically placed by the ESP-IDF build system
+- Total used space: ~3.75MB (leaving room for future expansion)
+- Partitions are aligned to 64KB boundaries for optimal flash performance
+- Factory partition is used only for initial programming
+- OTA updates use the dual-bank (A/B) approach for safe updates
+
+---
+
+**Development Deliverables:**
+
+* Shared ESP-IDF firmware for both boards.
+* USB host functionality for mouse/keyboard.
+* BLE HID profile with keyboard + absolute pointer.
+* Full UART protocol stack.
+* OTA update relay from A to B.
+* Configurable web interface.
+* State machines for input routing and host switching.
+* Robust logging and error handling.
+
+---
+
+**Constraints & Considerations:**
+
+* No assumptions about USB port/device consistency.
+* HID reports must represent full state, not deltas.
+* BLE pairing must persist across reboots and firmware updates.
+* UART communication must recover from frame loss or corruption.
+* OTA process must be atomic and verifiable.
+
+---
+
+**Target Users:**
+Advanced users and developers requiring seamless multi-host input without using software-based KVM or network-based solutions.
+
+---
+
+**Approval & Handoff:**
+This document defines the complete functional design. Any ambiguities or enhancements should be resolved with the product owner prior to implementation.

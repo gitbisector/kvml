@@ -1,0 +1,40 @@
+# Name, Type, SubType, Offset, Size, Flags
+# Note: Keep this file in sync with the partition table in the PRD
+# Note: Keep partitions aligned to erase sectors (0x10000 or 64KB)
+# Note: Total size for ESP32-S3 is 4MB (0x400000)
+
+# Bootloader (0x1000 - 0xF000)
+# Partition Table (0x8000 - 0x9000, 0x1000 bytes)
+
+# NVS partition for BLE bonding keys and configuration
+nvs,      data, nvs,     0x9000,   0x4000,
+
+# PHY initialization data (required by ESP-IDF)
+phy_init, data, phy,     ,         0x1000,
+
+# Factory app partition (bootloader uses this on first boot)
+factory,  app,  factory, 0x10000,  1M,
+
+# OTA data partition (tracks which app partition to boot from)
+otadata,  data, ota,     ,         0x2000,
+
+# OTA app partitions (dual OTA slots for reliable updates)
+ota_0,    app,  ota_0,   ,         1M,
+ota_1,    app,  ota_1,   ,         1M,
+
+# SPIFFS partition for web UI and configuration files
+storage,  data, spiffs,  ,         0xe0000,
+
+# Note: Total size calculation (all values in hex):
+# - Bootloader:          0x1000   (4KB)   0x0000 - 0x0FFF
+# - Partition table:     0x1000   (4KB)   0x8000 - 0x8FFF (keeps 0x1000-0x7FFF free)
+# - nvs:                0x4000   (16KB)  0x9000 - 0xCFFF
+# - phy_init:           0x1000    (4KB)   0xD000 - 0xDFFF
+# - factory:            0x100000 (1MB)    0x10000 - 0x10FFFF
+# - otadata:            0x2000    (8KB)   0x110000 - 0x111FFF
+# - ota_0:             0x100000  (1MB)    0x120000 - 0x21FFFF
+# - ota_1:             0x100000  (1MB)    0x220000 - 0x31FFFF
+# - storage:           0xE0000   (896KB) 0x320000 - 0x3FFFFF (last 64KB reserved)
+#
+# Total used:          0x400000 (4MB) - 0x40000 (256KB) = 0x3C0000 (3.75MB) used, 256KB reserved
+# Note: The last 256KB is reserved for future use and to ensure proper alignment

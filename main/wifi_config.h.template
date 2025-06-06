@@ -1,0 +1,18 @@
+// WiFi Configuration Template
+// Copy this file to wifi_config.h and fill in your WiFi credentials
+// Make sure to add wifi_config.h to .gitignore
+
+#ifndef WIFI_CONFIG_H
+#define WIFI_CONFIG_H
+
+// WiFi credentials
+#define WIFI_SSID      "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD  "YOUR_WIFI_PASSWORD"
+
+// Maximum connection retries
+#define MAXIMUM_RETRY  5
+
+// WiFi connection timeout in milliseconds
+#define WIFI_CONNECT_TIMEOUT_MS 10000
+
+#endif // WIFI_CONFIG_H
