@@ -1,0 +1,140 @@
+# Task ID: 3
+# Title: BLE HID Device Profile Implementation
+# Status: done
+# Dependencies: 1
+# Priority: high
+# Description: Implement Bluetooth Low Energy HID device profile with support for multiple simultaneous host connections per board.
+# Details:
+1. Initialize BLE stack with static MAC address configuration
+2. Implement HID over GATT profile according to BLE specification
+3. Create HID descriptor for keyboard and mouse functionality
+4. Implement report map and report characteristics
+5. Set up device information service with manufacturer data
+6. Implement battery service (optional)
+7. Configure static device name based on board identity
+8. Store bonding information in NVS
+9. Support multiple simultaneous BLE host connections
+
+Code structure:
+```c
+typedef struct {
+    bool connected;
+    uint16_t conn_id;
+    esp_bd_addr_t remote_bda;
+    bool hid_control_enabled;
+    // HID state tracking
+} ble_host_conn_t;
+
+typedef struct {
+    ble_host_conn_t connections[MAX_BLE_CONNECTIONS];
+    uint8_t active_connections;
+    // Connection management data
+} ble_hid_dev_state_t;
+
+void ble_hid_init(void);
+void ble_hid_send_keyboard_report(uint8_t conn_idx, uint8_t *report, size_t report_len);
+void ble_hid_send_mouse_report(uint8_t conn_idx, uint8_t *report, size_t report_len);
+```
+
+# Test Strategy:
+Test BLE pairing with various host computers (Windows, macOS, Linux) simultaneously. Verify HID descriptor is correctly interpreted by hosts. Test persistence of bonding information across reboots. Validate that the BLE identity remains static.
+
+# Subtasks:
+## 1. Implement BLE HID Keyboard Functionality [done]
+### Dependencies: None
+### Description: Develop the keyboard functionality for the BLE HID device profile
+### Details:
+Create keyboard report descriptor, implement key press/release detection, and send keyboard reports using ble_hid_send_keyboard_report function
+<info added on 2025-06-09T01:38:25.405Z>
+Significant progress made on BLE HID keyboard functionality:
+
+1. **Enhanced keyboard header** (ble_hid_keyboard.h):
+   - Added comprehensive keyboard key definitions (HID_KEY_A through F12, arrows, etc.)
+   - Added modifier definitions (CTRL, SHIFT, ALT, GUI)
+   - Added function prototypes for key press/release, typing, and reporting
+
+2. **Implemented keyboard logic** (ble_hid_keyboard.c):
+   - Created keyboard state tracking structure
+   - Implemented key press/release functions with proper state management
+   - Added support for up to 6 simultaneous keys (standard USB HID limit)
+   - Implemented string typing functionality
+   - Added proper keyboard report generation
+
+3. **Updated USB host** (usb_host.c):
+   - Enhanced keyboard report callback to properly parse USB HID keyboard reports
+   - Added forwarding of USB keyboard input to BLE keyboard functions
+   - Maintained legacy scroll wheel support from keyboard interface
+   - Improved error handling and logging
+
+4. **Build system**: 
+   - Fixed compilation conflicts between mouse and keyboard modules
+   - Successfully built firmware with keyboard support
+
+**Current status**: 
+- USB keyboard input is being detected and parsed correctly
+- Keyboard reports are being forwarded to BLE functions
+- However, actual BLE keyboard service characteristics are not yet implemented
+- The system currently logs "Keyboard service not yet implemented - report not sent"
+
+**Next steps needed**:
+- Implement actual BLE keyboard service with proper characteristics
+- Add keyboard report descriptor to BLE GATT services
+- Enable keyboard report transmission over BLE
+- Test end-to-end USB keyboard → BLE keyboard functionality
+</info added on 2025-06-09T01:38:25.405Z>
+<info added on 2025-06-10T01:47:30.847Z>
+<info added on 2025-06-10T14:22:10.405Z>
+Completed major refactor of USB HID device detection and report routing:
+
+1. **Eliminated device-level classification**:
+   - Removed previous approach that categorized entire USB devices as either keyboard or mouse
+   - Implemented content-based analysis that examines each individual USB HID report
+   - System now identifies report type based on content rather than source device
+
+2. **Improved report routing logic**:
+   - Mouse button and scroll wheel events from keyboard interfaces now properly route to BLE mouse reports
+   - Keyboard events route to BLE keyboard reports
+   - System correctly handles events regardless of which physical device generated them
+
+3. **Enhanced composite device support**:
+   - Properly handles devices that present both keyboard and mouse interfaces
+   - Correctly processes multi-function devices (e.g., keyboards with integrated trackpads/trackballs)
+   - Maintains proper state tracking for each input type
+
+4. **Implementation details**:
+   - Refactored usb_host.c to use report descriptor parsing for classification
+   - Added report type detection functions in usb_hid_parser.c
+   - Updated callback handlers to route based on report content
+   - Improved error handling for malformed reports
+
+This refactoring significantly improves the robustness of the USB-to-BLE bridging functionality, ensuring all input events are properly categorized and transmitted regardless of their source device.
+</info added on 2025-06-10T14:22:10.405Z>
+</info added on 2025-06-10T01:47:30.847Z>
+
+## 2. Implement BLE HID Mouse Functionality [done]
+### Dependencies: None
+### Description: Develop the mouse functionality for the BLE HID device profile
+### Details:
+Create mouse report descriptor, implement pointer movement detection, and send mouse reports using ble_hid_send_mouse_report function
+
+## 3. Implement Device Information and Battery Services [done]
+### Dependencies: None
+### Description: Set up device information service with manufacturer data and implement optional battery service
+### Details:
+Configure static device name based on board identity, implement device information service, and add battery service with level reporting
+
+## 4. Implement Bonding and Security Features [done]
+### Dependencies: 3.1, 3.2
+### Description: Set up secure bonding and implement storage of bonding information in NVS
+### Details:
+Implement BLE security manager, handle pairing requests, and store bonding keys in Non-Volatile Storage (NVS)
+
+## 5. Implement Multiple Host Connection Support [done]
+### Dependencies: 3.1, 3.2, 3.3, 3.4
+### Description: Add support for connecting to multiple BLE hosts simultaneously
+### Details:
+Extend the BLE stack to handle multiple simultaneous connections. Implement connection management using the ble_host_conn_t structure and track active connections. Modify report sending functions to target specific connections.
+<info added on 2025-06-10T04:32:47.123Z>
+Implement single host connection management for the BLE stack. Each ESP32 board will maintain one dedicated connection to a specific host device. Configure the BLE stack to establish and maintain a reliable connection with its designated host. Implement UART communication between the two ESP32 boards to coordinate which board should be actively sending input reports based on the selected host. Ensure seamless handoff of input control between the boards when the active host changes. Modify report sending functions to work with the single connection model while supporting the dual-ESP32 architecture.
+</info added on 2025-06-10T04:32:47.123Z>
+

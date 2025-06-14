@@ -1,0 +1,53 @@
+# Task ID: 14
+# Title: Neighbor Module Implementation
+# Status: done
+# Dependencies: 4, 5, 6
+# Priority: high
+# Description: Implement the neighbor module for serial communication between boards with active/standby states, HID report mirroring, and heartbeat mechanism.
+# Details:
+1. Create neighbor module for inter-board communication
+2. Implement active/standby state management
+3. Develop HID report mirroring between boards
+4. Implement heartbeat mechanism for neighbor detection
+5. Add neighbor state cleanup when heartbeat stops
+
+Neighbor module interface:
+```c
+typedef enum {
+    NEIGHBOR_STATE_DISCONNECTED,
+    NEIGHBOR_STATE_CONNECTED,
+    NEIGHBOR_STATE_ACTIVE,
+    NEIGHBOR_STATE_STANDBY
+} neighbor_state_t;
+
+bool neighbor_init(void);
+void neighbor_send_heartbeat(void);
+bool neighbor_is_connected(void);
+neighbor_state_t neighbor_get_state(void);
+void neighbor_set_state(neighbor_state_t state);
+bool neighbor_send_hid_report(uint8_t report_type, const uint8_t *data, size_t len);
+void neighbor_process_frame(const uart_frame_t *frame);
+```
+
+# Test Strategy:
+Test neighbor detection and state management. Verify HID report mirroring between boards. Test heartbeat mechanism and timeout handling. Validate state cleanup when connection is lost.
+
+# Subtasks:
+## 1. Implement Neighbor Module Core Functions [done]
+### Dependencies: None
+### Description: Create the core functions for the neighbor module including initialization and state management.
+### Details:
+Implement neighbor_init(), neighbor_get_state(), and neighbor_set_state() functions. Set up the state machine for tracking neighbor connection status.
+
+## 3. Implement HID Report Mirroring [done]
+### Dependencies: 14.1
+### Description: Create functions to send and receive HID reports between boards.
+### Details:
+Implement neighbor_send_hid_report() function to transmit HID reports to the neighbor board. Create handlers for receiving and processing HID reports from the neighbor.
+
+## 4. Develop Frame Processing Logic [done]
+### Dependencies: 14.1, 14.3
+### Description: Implement the logic to process incoming UART frames from the neighbor.
+### Details:
+Create neighbor_process_frame() function to handle different frame types (BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT). Implement appropriate actions for each frame type.
+

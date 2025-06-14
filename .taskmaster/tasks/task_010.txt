@@ -1,0 +1,68 @@
+# Task ID: 10
+# Title: OTA Relay System for Secondary Board
+# Status: deferred
+# Dependencies: 4, 9
+# Priority: low
+# Description: Implement the OTA relay system that allows the primary board to update the secondary board's firmware over UART.
+# Details:
+1. Extend OTA system to handle secondary board updates
+2. Implement UART protocol messages for OTA (OTA_START, OTA_DATA, OTA_END)
+3. Create chunking mechanism for firmware transfer
+4. Add progress tracking and error handling
+5. Implement verification of transferred firmware
+6. Coordinate reboot sequence after successful update
+
+UART OTA protocol:
+```c
+typedef struct {
+    uint32_t total_size;    // Total firmware size
+    uint32_t chunk_size;    // Size of each chunk
+    uint32_t fw_version;    // Firmware version
+} ota_start_t;
+
+typedef struct {
+    uint32_t chunk_index;   // Chunk number
+    uint32_t data_len;      // Length of this chunk
+    uint8_t data[0];        // Chunk data
+} ota_data_t;
+
+typedef struct {
+    uint32_t crc32;         // CRC32 of entire firmware
+    bool success;           // Success flag
+} ota_end_t;
+```
+
+# Test Strategy:
+Test OTA relay with various firmware sizes. Verify error handling for interrupted transfers. Test CRC validation of transferred firmware. Validate that both boards update successfully and maintain synchronization.
+
+# Subtasks:
+## 1. Implement UART OTA Protocol Handler [pending]
+### Dependencies: None
+### Description: Develop the UART protocol handler for OTA messages (OTA_START, OTA_DATA, OTA_END) on both primary and secondary boards.
+### Details:
+Create functions to send and receive OTA_START, OTA_DATA, and OTA_END messages using the provided struct definitions. Implement error checking and validation for each message type.
+
+## 2. Develop Firmware Chunking Mechanism [pending]
+### Dependencies: 10.1
+### Description: Create a system to break down the firmware into chunks for transmission over UART and reassemble on the receiving end.
+### Details:
+Implement functions to split firmware into chunks based on the chunk_size from ota_start_t. Create a buffer management system for receiving and storing chunks on the secondary board. Ensure proper handling of chunk_index for out-of-order reception.
+
+## 3. Implement Progress Tracking and Error Handling [pending]
+### Dependencies: 10.1, 10.2
+### Description: Add a system to track OTA progress and handle various error conditions during the update process.
+### Details:
+Develop a progress tracking mechanism based on received chunks vs. total_size. Implement timeout handling for incomplete transfers. Create an error reporting system for issues like CRC mismatch, invalid chunk size, or connection loss.
+
+## 4. Develop Firmware Verification System [pending]
+### Dependencies: 10.2, 10.3
+### Description: Implement a mechanism to verify the integrity and version of the transferred firmware before applying the update.
+### Details:
+Use the provided CRC32 in ota_end_t to verify the complete firmware image. Implement version checking to prevent downgrade attacks. Create a secure storage mechanism for the current firmware version on the secondary board.
+
+## 5. Implement Update Application and Reboot Sequence [pending]
+### Dependencies: 10.3, 10.4
+### Description: Develop the final stage of the OTA process to apply the update and coordinate the reboot sequence between primary and secondary boards.
+### Details:
+Create a function to apply the verified firmware update on the secondary board. Implement a coordinated reboot sequence ensuring both boards are in sync. Develop a rollback mechanism in case of boot failure after update.
+

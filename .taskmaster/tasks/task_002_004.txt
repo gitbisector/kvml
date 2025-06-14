@@ -1,0 +1,232 @@
+# Task ID: 2.4
+# Title: Create USB Device State Machine
+# Status: pending
+# Dependencies: 2.2, 2.3
+# Priority: high
+# Description: Implement a state machine to handle USB device connection, disconnection, and runtime events.
+# Details:
+1. Define device states and events
+2. Implement state transition logic
+3. Handle device connection/disconnection
+4. Manage device resources
+5. Handle error conditions
+
+# Implementation Steps:
+1. Define device states and events:
+   ```c
+   typedef enum {
+       DEVICE_STATE_DISCONNECTED,
+       DEVICE_STATE_CONNECTING,
+       DEVICE_STATE_CONFIGURING,
+       DEVICE_STATE_READY,
+       DEVICE_STATE_ERROR,
+       DEVICE_STATE_DISCONNECTING
+   } device_state_t;
+   
+   typedef enum {
+       DEVICE_EVENT_CONNECTED,
+       DEVICE_EVENT_DISCONNECTED,
+       DEVICE_EVENT_CONFIGURED,
+       DEVICE_EVENT_CONFIGURATION_FAILED,
+       DEVICE_EVENT_ERROR,
+       DEVICE_EVENT_RECOVERY
+   } device_event_t;
+   
+   typedef struct {
+       device_state_t state;
+       usb_device_handle_t device_handle;
+       hid_device_type_t device_type;
+       TaskHandle_t task_handle;
+       SemaphoreHandle_t mutex;
+       QueueHandle_t event_queue;
+       void *device_data; // Points to keyboard_state_t or mouse_state_t
+   } usb_device_context_t;
+   ```
+
+2. Implement state machine handler:
+   ```c
+   static void device_state_machine(usb_device_context_t *ctx, device_event_t event)
+   {
+       if (xSemaphoreTake(ctx->mutex, portMAX_DELAY) != pdTRUE) {
+           ESP_LOGE(TAG, "Failed to take device mutex");
+           return;
+       }
+       
+       device_state_t old_state = ctx->state;
+       
+       // State transition logic
+       switch (ctx->state) {
+           case DEVICE_STATE_DISCONNECTED:
+               if (event == DEVICE_EVENT_CONNECTED) {
+                   ctx->state = DEVICE_STATE_CONNECTING;
+                   start_device_configuration(ctx);
+               }
+               break;
+               
+           case DEVICE_STATE_CONNECTING:
+               if (event == DEVICE_EVENT_CONFIGURED) {
+                   ctx->state = DEVICE_STATE_READY;
+                   device_ready(ctx);
+               } else if (event == DEVICE_EVENT_CONFIGURATION_FAILED) {
+                   ctx->state = DEVICE_STATE_ERROR;
+                   handle_device_error(ctx, "Configuration failed");
+               } else if (event == DEVICE_EVENT_DISCONNECTED) {
+                   ctx->state = DEVICE_STATE_DISCONNECTED;
+                   cleanup_device(ctx);
+               }
+               break;
+               
+           case DEVICE_STATE_READY:
+               if (event == DEVICE_EVENT_DISCONNECTED) {
+                   ctx->state = DEVICE_STATE_DISCONNECTED;
+                   cleanup_device(ctx);
+               } else if (event == DEVICE_EVENT_ERROR) {
+                   ctx->state = DEVICE_STATE_ERROR;
+                   handle_device_error(ctx, "Device error");
+               }
+               break;
+               
+           case DEVICE_STATE_ERROR:
+               if (event == DEVICE_EVENT_RECOVERY) {
+                   ctx->state = DEVICE_STATE_DISCONCONNECTED;
+                   cleanup_device(ctx);
+               }
+               break;
+               
+           case DEVICE_STATE_DISCONNECTING:
+               // Handle any pending cleanup
+               break;
+       }
+       
+       ESP_LOGD(TAG, "Device state: %s -> %s (event: %d)", 
+               state_to_str(old_state), state_to_str(ctx->state), event);
+       
+       xSemaphoreGive(ctx->mutex);
+   }
+   ```
+
+3. Implement device management functions:
+   ```c
+   static void start_device_configuration(usb_device_context_t *ctx)
+   {
+       // Configure device
+       esp_err_t err = usb_host_device_config(ctx->device_handle, 
+                                            &device_config);
+       
+       if (err != ESP_OK) {
+           post_device_event(ctx, DEVICE_EVENT_CONFIGURATION_FAILED);
+           return;
+       }
+       
+       // Create device-specific resources
+       if (ctx->device_type == HID_DEVICE_TYPE_KEYBOARD) {
+           ctx->device_data = calloc(1, sizeof(keyboard_state_t));
+       } else if (ctx->device_type == HID_DEVICE_TYPE_MOUSE) {
+           ctx->device_data = calloc(1, sizeof(mouse_state_t));
+       }
+       
+       // Start device task
+       xTaskCreate(device_task, "hid_device", 4096, ctx, 5, &ctx->task_handle);
+       
+       post_device_event(ctx, DEVICE_EVENT_CONFIGURED);
+   }
+   
+   static void cleanup_device(usb_device_context_t *ctx)
+   {
+       // Signal task to exit
+       if (ctx->task_handle) {
+           vTaskDelete(ctx->task_handle);
+           ctx->task_handle = NULL;
+       }
+       
+       // Free device data
+       if (ctx->device_data) {
+           free(ctx->device_data);
+           ctx->device_data = NULL;
+       }
+       
+       // Close device handle
+       if (ctx->device_handle) {
+           usb_host_device_close(ctx->device_handle);
+           ctx->device_handle = NULL;
+       }
+   }
+   
+   static void device_ready(usb_device_context_t *ctx)
+   {
+       // Initialize device-specific state
+       if (ctx->device_type == HID_DEVICE_TYPE_KEYBOARD) {
+           keyboard_state_t *state = (keyboard_state_t *)ctx->device_data;
+           memset(state, 0, sizeof(keyboard_state_t));
+       } else if (ctx->device_type == HID_DEVICE_TYPE_MOUSE) {
+           mouse_state_t *state = (mouse_state_t *)ctx->device_data;
+           memset(state, 0, sizeof(mouse_state_t));
+       }
+       
+       ESP_LOGI(TAG, "%s ready", 
+               ctx->device_type == HID_DEVICE_TYPE_KEYBOARD ? "Keyboard" : "Mouse");
+   }
+   ```
+
+4. Implement event handling:
+   ```c
+   static void usb_event_handler(void *arg, esp_event_base_t event_base, 
+                               int32_t event_id, void *event_data)
+   {
+       usb_device_context_t *ctx = (usb_device_context_t *)arg;
+       
+       switch (event_id) {
+           case USB_HOST_USB_EVENT_DEVICE_ARRIVED:
+               post_device_event(ctx, DEVICE_EVENT_CONNECTED);
+               break;
+               
+           case USB_HOST_USB_EVENT_DEVICE_GONE:
+               post_device_event(ctx, DEVICE_EVENT_DISCONNECTED);
+               break;
+               
+           case USB_HOST_USB_EVENT_TRANSFER_ERROR:
+               post_device_event(ctx, DEVICE_EVENT_ERROR);
+               break;
+       }
+   }
+   
+   static void post_device_event(usb_device_context_t *ctx, device_event_t event)
+   {
+       if (xQueueSend(ctx->event_queue, &event, pdMS_TO_TICKS(100)) != pdPASS) {
+           ESP_LOGE(TAG, "Failed to post device event: %d", event);
+       }
+   }
+   ```
+
+5. Implement device task:
+   ```c
+   static void device_task(void *arg)
+   {
+       usb_device_context_t *ctx = (usb_device_context_t *)arg;
+       device_event_t event;
+       
+       while (1) {
+           if (xQueueReceive(ctx->event_queue, &event, portMAX_DELAY) == pdTRUE) {
+               device_state_machine(ctx, event);
+               
+               // Handle device-specific processing in READY state
+               if (ctx->state == DEVICE_STATE_READY) {
+                   process_device_data(ctx);
+               }
+           }
+       }
+   }
+   ```
+
+# Test Strategy:
+1. Test device connection/disconnection
+2. Verify state transitions with different event sequences
+3. Test error recovery
+4. Verify resource cleanup
+5. Test with multiple devices
+
+# Dependencies:
+- USB Host Library
+- FreeRTOS
+- HID device detection (Task 2.2)
+- HID report parsing (Task 2.3)

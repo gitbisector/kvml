@@ -6,101 +6,97 @@
 Dual ESP32-S3 Bluetooth HID Multiplexer
 
 **Objective:**
-Create a hardware solution that routes input from USB keyboards and mice to two separate computers via Bluetooth. The ESP32-S3 boards work together through UART, with configurable roles to handle HID communication with both hosts. The user can switch which host receives input through a virtual screen or web interface, emulating the functionality of Synergy software without needing a shared network.
+Create a hardware solution that routes input from USB keyboards and mice to two separate computers via Bluetooth. Two ESP32-S3 boards work as equal peers, each connecting to one host computer, with coordination handled through UART communication. Users switch between hosts using configurable hotkeys, providing seamless multi-host input without requiring network connectivity or complex configuration.
 
 ---
 
 **Key Features:**
 
-1. **Dual ESP32-S3 Board System with Configurable Roles:**
+1. **Dual ESP32-S3 Peer-to-Peer System:**
 
-   * ESP32-A: Primary controller with web UI, serves as master.
-   * ESP32-B: Secondary controller that forwards events to ESP32-A.
-   * UART link between boards for synchronization and data forwarding.
-   * Board roles configured via SPIFFS rather than USB device detection.
+   * Two ESP32-S3 boards operating as equal peers, no master/slave hierarchy.
+   * Each board connects directly to one host computer via Bluetooth.
+   * UART communication for coordination and hotkey synchronization.
+   * Single firmware image deployed to both boards.
 
 2. **Bluetooth HID Interface:**
 
-   * Each ESP32-S3 can connect to multiple host computers simultaneously.
-   * Both boards act as composite HID devices (keyboard + mouse).
-   * BLE identity is static and tied to the board, not the connected USB device.
+   * Each ESP32-S3 connects to exactly one host computer.
+   * Both boards act as composite mouse/keyboard devices.
+   * Static BLE identity per board for reliable host reconnection.
+   * Independent BLE connections, no cross-board routing.
 
-3. **Flexible USB HID Device Handling:**
+3. **USB HID Device Handling:**
 
-   * Support for multi-interface HID devices (devices reporting as both keyboard and mouse).
-   * Board role determines routing rather than USB device type.
-   * Both boards can handle any type of HID device.
+   * Support for composite mouse/keyboard devices (devices reporting as both mouse and keyboard interfaces).
+   * Content-based USB HID report routing: analyze individual reports rather than device-level classification.
+   * Multiple mouse format support: both 4-byte and 8-byte report formats with 16-bit movement data.
+   * Button overlay system for hybrid mice that split buttons and movement across interfaces.
+   * Raw USB HID keyboard reports forwarded unchanged; processed mouse movement data forwarded.
+   * Any USB HID device can be connected to either board with automatic neighbor forwarding.
 
-4. **Input Routing Logic:**
+4. **Hotkey-Based Host Switching:**
 
-   * ESP32-A (primary controller) handles routing decisions.
-   * Decides which host is active based on screen region or manual override.
-   * Receives HID events from ESP32-B via UART when a device is connected there.
-   * Routes HID events to the appropriate host based on current active selection.
+   * Ctrl+Ctrl hotkey combination (two left Ctrl presses in quick succession) triggers host switching.
+   * Robust hotkey detection with strict validation: only pure Left Ctrl presses (no other keys or modifiers) qualify.
+   * Invalid sequences (Ctrl+C, Ctrl+Shift, etc.) are automatically rejected to prevent accidental switching.
+   * Hotkey detection performed by the board with USB keyboard connected, regardless of active/inactive state.
+   * Toggle behavior: active board becomes inactive, inactive board becomes active.
+   * Works seamlessly in single board operation (toggles local state) and dual board operation (coordinates via UART).
+   * Switch command broadcast via UART to coordinate state between boards when neighbor present.
+   * Visual feedback via CapsLock LED blinking: briefly on when CapsLock off, briefly off when CapsLock on.
+   * LED state change masking during blink prevents interference from host switching LED commands.
+   * USB HID output reports control keyboard LEDs for user feedback with retry logic for busy USB conditions.
+   * BLE HID output report support allows host operating systems to control keyboard LEDs (CapsLock, NumLock, ScrollLock).
+   * Host-specific LED state caching maintains separate LED states for each connected BLE host.
+   * LED state forwarding ensures only the active host's LED commands affect the physical USB keyboard.
+   * Automatic LED state synchronization when switching between hosts applies the cached LED state of the newly active host.
+   * Force-restoration of LED state after blink ensures hardware matches expected state regardless of timing conflicts.
 
-5. **Web Configuration UI:**
+5. **Input Routing and Neighbor Coordination:**
 
-   * Hosted on the board configured as ESP32-A (primary).
-   * Functions include:
+   * Input routing state management: only one board forwards USB input to BLE at a time.
+   * Both boards maintain persistent BLE connections to their respective hosts.
+   * Active board forwards USB input to BLE; inactive board sends idle reports to BLE.
+   * UART coordination commands synchronize active/inactive states between boards.
+   * Fire-and-forget architecture enables graceful single board operation.
 
-     * Active host switching.
-     * Screen region configuration.
-     * Board role configuration (set which board is A/B).
-     * HID device information and status.
-     * OTA firmware upload.
-     * Debug/logging (optional).
+6. **UART Inter-Board Communication Protocol:**
 
-6. **OTA Firmware Updates:**
+   * High-speed binary communication at 921600 baud using GPIO12 (TX) and GPIO13 (RX).
+   * Frame structure: start_byte (0xAA), command, length (2 bytes), payload, CRC16 (2 bytes).
+   * Auto-response system for connectivity testing without requiring physical loopback.
+   * Fire-and-forget architecture prevents blocking when only one board is present.
+   * Background listener task continuously monitors for incoming frames.
+   * Command types: TEST_LOOPBACK (0xAB), TEST_RESPONSE (0xAC), PING/PONG (0xA0/0xA1).
+   * USB HID report forwarding: USB_MOUSE (0x10), USB_KEYBOARD (0x11).
+   * Input routing coordination: INPUT_ACTIVE (0x30), INPUT_INACTIVE (0x31).
+   * Host switching coordination: HOST_SWITCH_REQUEST (0x20), HOST_SWITCH_ACK (0x21).
+   * CRC16 validation ensures data integrity with automatic error detection.
 
-   * Single firmware binary for both boards.
-   * ESP32-A updates itself via HTTP.
-   * ESP32-A updates ESP32-B over UART with custom OTA protocol.
+7. **Local Configuration:**
 
-7. **UART Protocol:**
+   * NVS-based configuration storage (no SPIFFS required).
+   * Hotkey combinations configurable per deployment.
+   * BLE bonding information persistence.
+   * Default fallback configuration if NVS corrupted.
 
-   * Binary frame structure: preamble, type, length, payload, CRC16.
-   * Supports HID_EVENT, CONFIG_SYNC, ROLE_CONFIG, ACTIVE_HOST, OTA_*, etc.
-   * Enables secondary board (B) to forward HID events to primary board (A).
-   * Synchronizes configuration between boards.
-   * Optional ACK/retry mechanism.
+8. **State Management:**
 
-8. **BLE Implementation:**
+   * Each board maintains local active/inactive state.
+   * Coordinated switching ensures mutual exclusion of input forwarding.
+   * LED indicators show current state (active/inactive).
+   * Automatic state recovery after power cycles or disconnections.
 
-   * BLE functionality implemented only on the primary board (A).
-   * Static MAC address for reliable host reconnection.
-   * Fixed device name reflecting the board's role as primary controller.
-   * Support for connecting to multiple host computers simultaneously.
-   * BLE bonding information stored in NVS partition.
-   * Secondary board (B) forwards all HID events to primary board via UART.
+9. **Partitioning Scheme:**
 
-9. **State Synchronization:**
-
-   * Bidirectional event propagation via UART.
-   * Board roles and device capabilities shared between boards.
-   * Active host state tracked by primary board (A).
-   * Timer-based sanity checks.
-   * Automatic reconnection of BLE connections after role changes.
-
-10. **Configuration Storage:**
-
-   * SPIFFS-based configuration storage.
-   * JSON format configuration files.
-   * Persistent board role settings across power cycles.
-   * Fallback to default settings if configuration is corrupted.
-
-11. **Partitioning Scheme:**
-
-    * OTA-capable with dual app slots and SPIFFS for web content and configuration.
+    * Simplified single-application layout (no OTA complexity).
     * Flash layout optimized for ESP32-S3 with 4MB flash:
-      * Bootloader (4KB): 0x0000 - 0x0FFF
+      * Bootloader (16KB): 0x0000 - 0x3FFF
       * Partition table (4KB): 0x8000 - 0x8FFF
-      * NVS (16KB): 0x9000 - 0xCFFF (for BLE bonding and settings)
-      * PHY init (4KB): 0xD000 - 0xDFFF
-      * Factory app (1MB): 0x10000 - 0x10FFFF
-      * OTA data (8KB): ~0x110000 (tracks active OTA partition)
-      * OTA_0 (1MB): ~0x120000
-      * OTA_1 (1MB): ~0x220000
-      * Storage SPIFFS (896KB): ~0x320000 (for web UI and config files)
+      * NVS (32KB): 0x9000 - 0x10FFF (for BLE bonding and configuration)
+      * PHY init (4KB): 0x11000 - 0x11FFF
+      * Application (3.8MB): 0x12000 - 0x3FFFFF (single firmware image)
 
 ---
 
@@ -108,33 +104,38 @@ Create a hardware solution that routes input from USB keyboards and mice to two 
 
 | Name      | Type   | SubType  | Size      | Offset   | Purpose |
 | --------- | ------ | -------- | --------- | -------- | ------- |
-| factory   | app    | factory  | 1 MB      | 0x10000  | Factory app (initial deployment) |
-| otadata   | data   | ota      | 8 KB      | -        | OTA update tracking |
-| nvs       | data   | nvs      | 24 KB     | -        | BLE bonding, configuration |
-| phy_init  | data   | phy      | 4 KB      | -        | PHY initialization data |
-| ota_0     | app    | ota_0    | 1 MB    | -        | OTA firmware slot 1 |
-| ota_1     | app    | ota_1    | 1 MB    | -        | OTA firmware slot 2 |
-| spiffs    | data   | spiffs   | 512 KB    | -        | Web UI, config files |
+| nvs       | data   | nvs      | 32 KB     | 0x9000   | BLE bonding, hotkey configuration |
+| phy_init  | data   | phy      | 4 KB      | 0x11000  | PHY initialization data |
+| factory   | app    | factory  | 3.8 MB    | 0x12000  | Single application image |
 
 **Notes:**
-- All partitions are automatically placed by the ESP-IDF build system
-- Total used space: ~3.75MB (leaving room for future expansion)
-- Partitions are aligned to 64KB boundaries for optimal flash performance
-- Factory partition is used only for initial programming
-- OTA updates use the dual-bank (A/B) approach for safe updates
+- Simplified partition layout eliminates OTA complexity
+- Large application partition accommodates comprehensive feature set
+- NVS partition sized for extensive BLE bonding storage
+- No SPIFFS partition required (eliminates web UI dependency)
+- Total used space: ~3.9MB with room for future expansion
 
 ---
 
 **Development Deliverables:**
 
-* Shared ESP-IDF firmware for both boards.
-* USB host functionality for mouse/keyboard.
-* BLE HID profile with keyboard + absolute pointer.
-* Full UART protocol stack.
-* OTA update relay from A to B.
-* Configurable web interface.
-* State machines for input routing and host switching.
-* Robust logging and error handling.
+* Single ESP-IDF firmware image for both boards.
+* USB host functionality with composite mouse/keyboard device support.
+* Content-based USB HID report routing with format detection.
+* BLE HID profile with mouse/keyboard composite device.
+* UART protocol stack with frame-based communication and CRC validation.
+* Auto-response system for neighbor connectivity testing.
+* USB HID report forwarding with fire-and-forget architecture.
+* Background listener task for real-time inter-board communication.
+* Neighbor coordination module for peer-to-peer communication.
+* Ctrl+Ctrl hotkey detection and processing system with timing validation.
+* State management for active/inactive host coordination.
+* CapsLock LED feedback system via USB HID output reports for host switching indication.
+* BLE HID output report handling for receiving LED control commands from host operating systems.
+* Host-specific LED state caching system to maintain separate LED states per connected BLE host.
+* LED state forwarding mechanism that only applies LED commands from the currently active host to the USB keyboard.
+* Automatic LED synchronization during host switching to apply the cached LED state of the newly active host.
+* Robust error handling and connection recovery.
 
 ---
 
@@ -142,14 +143,17 @@ Create a hardware solution that routes input from USB keyboards and mice to two 
 
 * No assumptions about USB port/device consistency.
 * HID reports must represent full state, not deltas.
-* BLE pairing must persist across reboots and firmware updates.
+* BLE pairing must persist across reboots and power cycles.
 * UART communication must recover from frame loss or corruption.
-* OTA process must be atomic and verifiable.
+* Hotkey combinations must be distinguishable from normal typing.
+* State synchronization must handle network partitions gracefully.
+* LED indicators must be clearly visible and intuitive.
+* No network connectivity requirements (WiFi/Ethernet independent).
 
 ---
 
 **Target Users:**
-Advanced users and developers requiring seamless multi-host input without using software-based KVM or network-based solutions.
+Advanced users and developers requiring seamless multi-host input switching without software dependencies, network configuration, or complex setup procedures.
 
 ---
 

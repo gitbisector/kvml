@@ -24,6 +24,10 @@ idf_component_register(
         hal
         freertos
         common
+        
+    PRIV_REQUIRES
+        usb_host
+        uart_protocol
 )
 
 # Create required directories if they don't exist

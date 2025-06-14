@@ -1,0 +1,67 @@
+# Task ID: 6
+# Title: Input Routing Logic Implementation
+# Status: done
+# Dependencies: 2, 3, 4, 5
+# Priority: high
+# Description: Develop the logic for routing input events between the two ESP32-S3 boards based on active host selection.
+# Details:
+1. Implement state machine for tracking active host (A or B)
+2. Create logic for forwarding keyboard/mouse events between boards based on active host
+3. Implement compile-time defined hotkey detection for manual host switching
+4. Ensure proper state flushing when switching hosts (release all keys/buttons)
+5. Implement debounce mechanism for hotkey detection
+
+State machine:
+```c
+typedef enum {
+    HOST_A_ACTIVE = 0,
+    HOST_B_ACTIVE = 1
+} active_host_t;
+
+void set_active_host(active_host_t host);
+active_host_t get_active_host(void);
+void flush_input_state(void);
+bool detect_host_switch_hotkey(uint8_t key, bool pressed);
+```
+
+Hotkey definition:
+```c
+// In config.h
+#define HOST_SWITCH_KEY KEY_PRINTSCREEN
+#define HOST_SWITCH_DOUBLE_TAP_MS 500
+```
+
+# Test Strategy:
+Test host switching with hotkey detection. Verify that all keys/buttons are properly released when switching hosts. Test edge cases such as rapid switching and boundary conditions.
+
+# Subtasks:
+## 1. Implement Active Host State Machine [done]
+### Dependencies: None
+### Description: Create a state machine to track and manage the active host (A or B) using the provided enum and functions.
+### Details:
+Use the active_host_t enum and implement set_active_host() and get_active_host() functions. Ensure proper state transitions between HOST_A_ACTIVE and HOST_B_ACTIVE.
+
+## 2. Develop Input Event Forwarding Logic [done]
+### Dependencies: 6.1
+### Description: Implement the logic for forwarding keyboard and mouse events between boards based on the active host.
+### Details:
+Create functions to handle input events, check the active host state, and forward events to the appropriate board when necessary. Use the UART communication protocol for inter-board communication.
+
+## 3. Implement Compile-Time Hotkey Configuration [done]
+### Dependencies: 6.1
+### Description: Develop logic to detect hotkey presses based on compile-time configuration for manual host switching.
+### Details:
+Implement detect_host_switch_hotkey() function to recognize the configured hotkey. Use the HOST_SWITCH_KEY and HOST_SWITCH_DOUBLE_TAP_MS constants from config.h. Include timing logic for double-tap detection.
+
+## 4. Add Manual Host Selection Override [done]
+### Dependencies: 6.1, 6.3
+### Description: Implement a mechanism for manual override of host selection using the detected hotkey.
+### Details:
+Create functions for manual host selection that are triggered by the hotkey detection. Implement a way to toggle between hosts using the hotkey.
+
+## 5. Implement State Flushing and Debounce Mechanism [done]
+### Dependencies: 6.1, 6.2, 6.3
+### Description: Develop logic to flush input state when switching hosts and implement a debounce mechanism for hotkey detection.
+### Details:
+Implement the flush_input_state() function to release all keys and buttons when switching hosts. Create a debounce mechanism to prevent false hotkey detections.
+

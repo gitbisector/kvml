@@ -1,0 +1,259 @@
+# Task ID: 2.5
+# Title: Implement Error Handling and Edge Cases
+# Status: pending
+# Dependencies: 2.4
+# Priority: high
+# Description: Add robust error handling for unexpected USB events and edge cases.
+# Details:
+1. Implement error detection and recovery
+2. Add logging and diagnostics
+3. Handle device timeouts
+4. Implement device reset functionality
+5. Add watchdog for device recovery
+
+# Implementation Steps:
+1. Define error types and handling strategies:
+   ```c
+   typedef enum {
+       ERROR_NONE = 0,
+       ERROR_DEVICE_DISCONNECTED,
+       ERROR_TRANSFER_TIMEOUT,
+       ERROR_TRANSFER_FAILED,
+       ERROR_DEVICE_HUNG,
+       ERROR_UNSUPPORTED_DEVICE,
+       ERROR_OUT_OF_MEMORY,
+       ERROR_DEVICE_RESET
+   } usb_error_t;
+   
+   typedef struct {
+       usb_error_t error_code;
+       const char *description;
+       esp_err_t esp_error;
+       uint32_t timestamp;
+       uint32_t count;
+   } error_info_t;
+   
+   // Error handling strategy
+   #define MAX_ERROR_COUNT 3
+   #define ERROR_RESET_DELAY_MS 1000
+   #define WATCHDOG_TIMEOUT_MS 5000
+   ```
+
+2. Implement error handling functions:
+   ```c
+   static void handle_usb_error(usb_device_context_t *ctx, usb_error_t error, 
+                              const char *description, esp_err_t esp_err)
+   {
+       static error_info_t last_error = {0};
+       
+       // Update error info
+       error_info_t err_info = {
+           .error_code = error,
+           .description = description,
+           .esp_error = esp_err,
+           .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS,
+           .count = 1
+       };
+       
+       // Check if this is a repeat of the last error
+       if (last_error.error_code == error && 
+           (err_info.timestamp - last_error.timestamp) < 1000) {
+           err_info.count = last_error.count + 1;
+       }
+       
+       // Log the error
+       ESP_LOGE(TAG, "USB Error [%d]: %s (ESP: %s, count: %u)", 
+               error, description, esp_err_to_name(esp_err), err_info.count);
+       
+       // Take action based on error type and count
+       if (err_info.count >= MAX_ERROR_COUNT) {
+           ESP_LOGW(TAG, "Max error count reached, resetting device");
+           reset_usb_device(ctx);
+           err_info.count = 0; // Reset counter after recovery attempt
+       }
+       
+       // Save last error
+       last_error = err_info;
+       
+       // Post error event to state machine
+       post_device_event(ctx, DEVICE_EVENT_ERROR);
+   }
+   
+   static void reset_usb_device(usb_device_context_t *ctx)
+   {
+       if (!ctx || !ctx->device_handle) return;
+       
+       ESP_LOGW(TAG, "Resetting USB device...");
+       
+       // Save current state
+       device_state_t prev_state = ctx->state;
+       ctx->state = DEVICE_STATE_DISCONNECTING;
+       
+       // Reset device
+       esp_err_t err = usb_host_device_reset(ctx->device_handle);
+       if (err != ESP_OK) {
+           ESP_LOGE(TAG, "Failed to reset device: %s", esp_err_to_name(err));
+           // Force re-enumeration
+           usb_host_device_close(ctx->device_handle);
+           ctx->device_handle = NULL;
+       }
+       
+       // Wait for device to be ready again
+       vTaskDelay(pdMS_TO_TICKS(ERROR_RESET_DELAY_MS));
+       
+       // Attempt to reconfigure device
+       if (ctx->device_handle) {
+           ctx->state = DEVICE_STATE_CONNECTING;
+           start_device_configuration(ctx);
+       } else {
+           // Device was closed, wait for reconnection
+           ctx->state = DEVICE_STATE_DISCONNECTED;
+       }
+   }
+   ```
+
+3. Implement watchdog for device recovery:
+   ```c
+   static void watchdog_task(void *arg)
+   {
+       usb_device_context_t *ctx = (usb_device_context_t *)arg;
+       uint32_t last_activity = xTaskGetTickCount();
+       
+       while (1) {
+           vTaskDelay(pdMS_TO_TICKS(1000));
+           
+           if (ctx->state != DEVICE_STATE_READY) {
+               last_activity = xTaskGetTickCount();
+               continue;
+           }
+           
+           // Check for device activity
+           if ((xTaskGetTickCount() - last_activity) > pdMS_TO_TICKS(WATCHDOG_TIMEOUT_MS)) {
+               ESP_LOGW(TAG, "Device watchdog timeout, resetting...");
+               handle_usb_error(ctx, ERROR_DEVICE_HUNG, "Device watchdog timeout", ESP_ERR_TIMEOUT);
+               last_activity = xTaskGetTickCount();
+           }
+       }
+   }
+   
+   // Call this when device is active
+   static void update_device_activity(usb_device_context_t *ctx)
+   {
+       if (!ctx || ctx->state != DEVICE_STATE_READY) return;
+       
+       // Update last activity timestamp
+       // This would be called from the device task when data is received
+       static uint32_t last_update = 0;
+       uint32_t now = xTaskGetTickCount();
+       
+       // Throttle updates to once per 100ms
+       if ((now - last_update) > pdMS_TO_TICKS(100)) {
+           last_update = now;
+       }
+   }
+   ```
+
+4. Add error recovery in transfer functions:
+   ```c
+   static esp_err_t safe_usb_transfer(usb_device_handle_t dev_handle, 
+                                     uint8_t ep, 
+                                     uint8_t *data, 
+                                     size_t len, 
+                                     uint32_t timeout_ms)
+   {
+       esp_err_t err;
+       int retry_count = 0;
+       
+       do {
+           err = usb_host_transfer(dev_handle, ep, data, len, timeout_ms);
+           
+           if (err == ESP_OK || err == ESP_ERR_TIMEOUT) {
+               return err;
+           }
+           
+           // Handle specific errors
+           switch (err) {
+               case ESP_ERR_NOT_FOUND:
+               case ESP_ERR_NOT_SUPPORTED:
+                   // Non-recoverable errors
+                   return err;
+                   
+               case ESP_ERR_INVALID_STATE:
+               case ESP_ERR_INVALID_RESPONSE:
+                   // Try to recover
+                   vTaskDelay(pdMS_TO_TICKS(10));
+                   break;
+                   
+               default:
+                   // Other errors, wait longer and retry
+                   vTaskDelay(pdMS_TO_TICKS(50));
+                   break;
+           }
+           
+           retry_count++;
+       } while (retry_count < MAX_RETRY_COUNT);
+       
+       return err;
+   }
+   ```
+
+5. Add device validation:
+   ```c
+   static bool validate_hid_descriptor(const uint8_t *desc, size_t len)
+   {
+       if (len < 9) { // Minimum HID descriptor size
+           return false;
+       }
+       
+       // Check HID descriptor header
+       if (desc[0] != 0x09 ||      // bLength
+           desc[1] != 0x21) {      // bDescriptorType (HID)
+           return false;
+       }
+       
+       // Additional validation can be added here
+       
+       return true;
+   }
+   
+   static bool is_supported_device(const usb_device_desc_t *desc)
+   {
+       // Check for supported VID/PID combinations
+       // This is an example - add your supported devices
+       static const struct {
+           uint16_t vid;
+           uint16_t pid;
+       } supported_devices[] = {
+           {0x046D, 0xC52B},  // Logitech Unifying Receiver
+           {0x045E, 0x07B2},  // Microsoft Nano Transceiver
+           // Add more supported devices
+       };
+       
+       for (size_t i = 0; i < sizeof(supported_devices)/sizeof(supported_devices[0]); i++) {
+           if (desc->idVendor == supported_devices[i].vid && 
+               desc->idProduct == supported_devices[i].pid) {
+               return true;
+           }
+       }
+       
+       // Check device class/subclass/protocol for HID devices
+       if (desc->bDeviceClass == 0 ||  // Class in interface descriptor
+           desc->bDeviceClass == USB_CLASS_PER_INTERFACE) {
+           return true; // Check interface descriptors later
+       }
+       
+       return false;
+   }
+   ```
+
+# Test Strategy:
+1. Test error conditions (unplug device during transfer, etc.)
+2. Verify error recovery works as expected
+3. Test with various USB devices (including unsupported ones)
+4. Verify watchdog functionality
+5. Test resource cleanup
+
+# Dependencies:
+- USB Host Library
+- FreeRTOS
+- Previous USB HID implementation (Tasks 2.1-2.4)

@@ -19,6 +19,9 @@ idf_component_register(
         freertos
         driver
         soc
+        ble_hid
+        uart_protocol
+        kvml
 
     PRIV_REQUIRES
         usb_host_hid

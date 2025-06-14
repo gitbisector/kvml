@@ -1,0 +1,62 @@
+# Task ID: 2
+# Title: USB Host Implementation for HID Devices
+# Status: done
+# Dependencies: 1
+# Priority: high
+# Description: Implement USB host functionality to detect and interface with USB HID devices that may report as both keyboard and mouse simultaneously.
+# Details:
+1. Initialize USB host library for ESP32-S3
+2. Implement device detection logic to identify HID devices
+3. Create handlers for HID devices that can report as both keyboard and mouse
+4. Implement HID report parsing for standard keyboard and mouse reports from the same device
+5. Create state machine for USB device connection/disconnection events
+6. Store device state in memory for forwarding to BLE interface
+7. Add error handling for unexpected USB events
+
+Code structure:
+```c
+typedef struct {
+    bool connected;
+    uint8_t device_capabilities; // Bitmask: DEVICE_CAP_KEYBOARD | DEVICE_CAP_MOUSE
+    hid_device_info_t device_info;
+    // Device state (key presses, mouse buttons, etc.)
+} usb_device_state_t;
+
+void usb_host_task(void *pvParameters);
+void usb_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+```
+
+# Test Strategy:
+Test with various USB HID devices including those that report as both keyboard and mouse simultaneously. Verify that the system correctly identifies device capabilities at runtime. Test hot-plugging scenarios and error recovery.
+
+# Subtasks:
+## 1. Implement USB Host Initialization [done]
+### Dependencies: None
+### Description: Set up the USB host library for ESP32-S3 and configure necessary parameters.
+### Details:
+Initialize USB host library, set up configuration parameters, enable USB OTG mode, and start the USB host task.
+
+## 2. Develop HID Device Detection Logic [done]
+### Dependencies: 2.1
+### Description: Create a mechanism to detect and identify HID devices and their capabilities when connected.
+### Details:
+Implement device detection logic in the USB event handler, focusing on identifying HID devices and their capabilities (keyboard, mouse, or both).
+
+## 3. Implement HID Report Parsing [done]
+### Dependencies: 2.2
+### Description: Create functions to parse standard HID reports for devices that may report as both keyboard and mouse.
+### Details:
+Develop parsing functions for HID reports that can handle devices reporting as both keyboard and mouse simultaneously, extracting relevant information such as key presses, mouse movements, and button clicks.
+
+## 4. Create Device State Management [done]
+### Dependencies: 2.2, 2.3
+### Description: Implement a system to manage and store the state of connected USB devices with multiple capabilities.
+### Details:
+Use the usb_device_state_t struct to store device information, connection status, capabilities, and current state. Implement functions to update and retrieve device states.
+
+## 5. Develop Connection/Disconnection Handler [done]
+### Dependencies: 2.1, 2.2, 2.4
+### Description: Create a state machine to handle USB device connection and disconnection events.
+### Details:
+Implement a state machine in the USB event handler to manage device lifecycle events, including connection, disconnection, and runtime device capability detection.
+

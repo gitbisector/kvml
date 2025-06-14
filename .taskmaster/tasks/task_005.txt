@@ -1,0 +1,77 @@
+# Task ID: 5
+# Title: Board Role Configuration
+# Status: done
+# Dependencies: 1, 4
+# Priority: high
+# Description: Implement hotkey detection and switching logic for peer-to-peer ESP32-S3 boards to coordinate host switching.
+# Details:
+1. Implement Ctrl+Ctrl hotkey detection logic (two left Ctrl presses in quick succession)
+2. Set up UART communication between peer boards
+3. Implement coordination protocol for host switching
+4. Configure event handlers for hotkey events
+5. Implement state management for active host connections
+6. Add visual feedback using CapsLock LED blinking
+
+Possible implementation:
+```c
+// In a hotkey_switch.h file
+// Hotkey combinations
+#define HOTKEY_COMBO_CTRL 0x01
+
+// Communication protocol commands
+#define CMD_SWITCH_REQUEST 0x10
+#define CMD_SWITCH_ACK 0x11
+
+// Helper functions
+void detect_hotkey(uint8_t key_code);
+void process_switch_request(void);
+void notify_peer_board(uint8_t command);
+void toggle_capslock_led(bool is_capslock_on);
+```
+
+# Test Strategy:
+Test Ctrl+Ctrl hotkey detection with various timing scenarios. Verify that boards properly coordinate switching via UART. Test the complete switching sequence between hosts with both boards connected. Verify CapsLock LED blinking provides clear visual feedback during host switching.
+
+# Subtasks:
+## 1. Implement Hotkey Detection Logic [done]
+### Dependencies: None
+### Description: Create logic to detect Ctrl+Ctrl hotkey combination (two left Ctrl presses in quick succession).
+### Details:
+Implement a key tracking system that can detect when the left Ctrl key is pressed twice in quick succession. Create a detect_hotkey() function that processes incoming key codes, tracks timing between presses, and identifies the Ctrl+Ctrl hotkey combination.
+
+## 2. Implement Peer-to-Peer UART Communication [done]
+### Dependencies: 5.1
+### Description: Set up UART communication between peer ESP32-S3 boards for coordination.
+### Details:
+Implement bidirectional UART communication between boards. Create functions to send and receive commands related to host switching. Define a simple protocol for coordination messages.
+
+## 3. Implement Host Switching Coordination Protocol [done]
+### Dependencies: 5.2
+### Description: Create a protocol for boards to coordinate which board controls which host.
+### Details:
+Implement a state machine to manage the switching process. Create functions to request a switch, acknowledge a switch request, and complete the switching process. Ensure both boards maintain consistent state about which board is connected to which host.
+
+## 4. Configure Hotkey Event Handlers [done]
+### Dependencies: 5.1
+### Description: Implement and register event handlers for Ctrl+Ctrl hotkey detection and processing.
+### Details:
+Create event handlers that respond to detected Ctrl+Ctrl hotkey combinations. Register these handlers with the keyboard input processing system. Implement the logic to initiate the switching process when the hotkey is detected.
+
+## 5. Implement Host Connection State Management [done]
+### Dependencies: 5.3
+### Description: Create a system to track and manage which board is connected to which host.
+### Details:
+Implement state tracking to maintain awareness of current connections. Create functions to update connection state when switching occurs. Ensure proper routing of keyboard and mouse inputs based on the current state.
+
+## 6. Implement CapsLock LED Feedback Mechanism [done]
+### Dependencies: 5.3, 5.5
+### Description: Implement visual feedback using CapsLock LED to indicate when host switching occurs.
+### Details:
+Add CapsLock LED blinking as a visual indicator for host switching. When CapsLock is off, briefly turn the LED on; when CapsLock is on, briefly turn the LED off. Implement USB host functionality to control keyboard LEDs via HID output reports. Create functions to trigger the LED feedback when switching occurs.
+
+## 7. Implement USB HID Output Reports for LED Control [done]
+### Dependencies: 5.6
+### Description: Add support for sending HID output reports to control keyboard LEDs.
+### Details:
+Extend the USB host functionality to support sending HID output reports to the keyboard. Implement functions to read the current LED state, toggle the CapsLock LED, and restore the original state. Ensure proper timing for the blinking effect to make it noticeable but not disruptive.
+

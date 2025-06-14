@@ -4,8 +4,8 @@
 #include "esp_timer.h"
 #include "host/ble_gap.h"
 
-// Maximum allowed BLE HID connections
-#define BLE_HID_MAX_CONN 2
+// Maximum allowed BLE HID connections (single connection per ESP32 in master/slave architecture)
+#define BLE_HID_MAX_CONN 1
 
 // HID Service UUIDs
 #define BLE_SVC_HID_UUID16            0x1812
@@ -28,11 +28,10 @@
 
 // Device state tracking structure
 typedef struct {
-    uint8_t active_connections;
-    bool connected[BLE_HID_MAX_CONN];
-    uint16_t conn_handles[BLE_HID_MAX_CONN];
-    esp_timer_handle_t adv_restart_timer;  // Timer for delayed advertising restart
-    esp_timer_handle_t adv_retry_timer;    // Timer for retry when BLE stack is busy
+    bool connected;                       // Single connection state
+    uint16_t conn_handle;                 // Single connection handle
+    esp_timer_handle_t adv_restart_timer; // Timer for delayed advertising restart
+    esp_timer_handle_t adv_retry_timer;   // Timer for retry when BLE stack is busy
     int adv_retry_count;                  // Count of advertisement retry attempts
     bool pairing_in_progress;             // Flag to indicate pairing is in progress
 } ble_hid_dev_state_t;
@@ -75,3 +74,15 @@ void ble_hid_device_start_advertising(void);
  * @return 0 on success, non-zero on error
  */
 int ble_hid_gap_event(struct ble_gap_event *event, void *arg);
+
+/**
+ * @brief Check if focus can be switched (no buttons pressed, no keys held)
+ * @return true if focus can be switched safely, false if locked
+ */
+bool ble_hid_can_switch_focus(void);
+
+/**
+ * @brief Check if the BLE HID device is connected
+ * @return true if connected, false otherwise
+ */
+bool ble_hid_is_connected(void);

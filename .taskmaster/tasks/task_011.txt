@@ -1,0 +1,64 @@
+# Task ID: 11
+# Title: HID State Management and Synchronization
+# Status: pending
+# Dependencies: 2, 3, 6
+# Priority: high
+# Description: Implement state management for HID devices to ensure proper synchronization when switching between hosts.
+# Details:
+1. Create data structures to track complete HID state (pressed keys, mouse buttons, etc.)
+2. Implement state update functions for USB input events
+3. Create state flush mechanism for host switching
+4. Ensure all keys/buttons are released when switching hosts
+5. Implement state synchronization between boards via neighbor module
+6. Handle edge cases like stuck keys
+
+HID state tracking:
+```c
+typedef struct {
+    uint8_t keyboard_report[8];  // Standard HID keyboard report
+    uint8_t key_states[256/8];   // Bitmap of pressed keys
+    uint8_t mouse_buttons;       // Mouse button state
+    int16_t mouse_x;             // Relative mouse X movement
+    int16_t mouse_y;             // Relative mouse Y movement
+} hid_state_t;
+
+void hid_state_update_key(uint8_t key, bool pressed);
+void hid_state_update_mouse(uint8_t buttons, int16_t x, int16_t y);
+void hid_state_flush(void);
+bool hid_state_generate_reports(uint8_t *kb_report, uint8_t *mouse_report);
+```
+
+# Test Strategy:
+Test state tracking with various input combinations. Verify all keys/buttons are properly released when switching hosts. Test edge cases like rapid key presses during host switching. Validate state synchronization between boards.
+
+# Subtasks:
+## 1. Implement State Update Functions [pending]
+### Dependencies: None
+### Description: Create functions to update the HID state based on USB input events
+### Details:
+Implement hid_state_update_key() and hid_state_update_mouse() functions to modify the hid_state_t structure. Ensure proper handling of key presses/releases and mouse movements/clicks.
+
+## 2. Develop State Flush Mechanism [pending]
+### Dependencies: 11.1
+### Description: Implement a mechanism to clear the HID state when switching hosts
+### Details:
+Create hid_state_flush() function to reset all fields in hid_state_t to their default values. Ensure all keys and buttons are marked as released.
+
+## 3. Generate HID Reports [pending]
+### Dependencies: 11.1
+### Description: Implement a function to generate standard HID reports from the current state
+### Details:
+Develop hid_state_generate_reports() to create keyboard and mouse HID reports based on the current hid_state_t. Handle conversion between internal state representation and standard HID reports.
+
+## 4. Implement Inter-Board State Synchronization [pending]
+### Dependencies: 11.1, 11.2, 11.3
+### Description: Create a protocol for synchronizing HID state between boards using the neighbor module
+### Details:
+Design and implement a communication protocol to share hid_state_t between boards. Use the UART frame types INPUT_KEY and INPUT_MOUSE to transmit state changes to the neighbor board.
+
+## 5. Handle Edge Cases and Error Conditions [pending]
+### Dependencies: 11.1, 11.2, 11.3, 11.4
+### Description: Implement robust error handling and manage edge cases like stuck keys
+### Details:
+Add timeout mechanisms for key presses to prevent stuck keys. Implement error checking in all functions and handle potential issues like buffer overflows or communication errors between boards.
+

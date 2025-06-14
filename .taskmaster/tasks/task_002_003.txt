@@ -1,0 +1,308 @@
+# Task ID: 2.3
+# Title: Implement HID Report Parsing and Forwarding
+# Status: pending
+# Dependencies: 2.2
+# Priority: high
+# Description: Create functions to parse HID reports and implement appropriate routing based on board role.
+# Details:
+1. Implement keyboard report parsing with support for different formats
+2. Implement mouse report parsing with support for variable report layouts
+3. Create UART protocol for forwarding HID reports from secondary to primary board
+4. Process modifier keys and special keys
+5. Handle mouse buttons and coordinate mapping
+6. Implement conditional BLE reporting (primary board only)
+
+# Test Strategy:
+1. Test keyboard and mouse report parsing with various inputs
+2. Verify proper state tracking for simultaneous key presses/releases
+3. Test UART forwarding from secondary to primary board
+4. Test conditional BLE reporting (only on primary board)
+5. Verify proper coordinate mapping for mouse movements
+6. Test report delivery with different board roles
+7. Benchmark report processing and forwarding latency
+
+# Implementation Steps:
+1. Define report structures:
+   ```c
+   // Keyboard HID report (boot protocol)
+   typedef struct {
+       uint8_t modifiers;
+       uint8_t reserved;
+       uint8_t keycodes[6];
+   } __attribute__((packed)) hid_keyboard_report_t;
+   
+   // Mouse HID report (boot protocol)
+   typedef struct {
+       uint8_t buttons;
+       int8_t x;
+       int8_t y;
+       int8_t wheel;
+       int8_t pan;
+   } __attribute__((packed)) hid_mouse_report_t;
+   
+   // Key state tracking
+   typedef struct {
+       uint8_t modifiers;
+       uint8_t keys[6];
+       bool key_state[256]; // Track key states for key up/down events
+   } keyboard_state_t;
+   
+   // Mouse state tracking
+   typedef struct {
+       uint8_t buttons;
+       int16_t x;
+       int16_t y;
+       int8_t wheel;
+       int8_t pan;
+   } mouse_state_t;
+   ```
+
+2. Implement keyboard report parsing:
+   ```c
+   static void process_keyboard_report(hid_keyboard_report_t *report, keyboard_state_t *state)
+   {
+       static hid_keyboard_report_t prev_report = {0};
+       
+       // Check for modifier key changes
+       if (report->modifiers != prev_report.modifiers) {
+           handle_modifier_change(report->modifiers, prev_report.modifiers);
+       }
+       
+       // Check for key state changes
+       for (int i = 0; i < 6; i++) {
+           uint8_t key = report->keycodes[i];
+           uint8_t prev_key = prev_report.keycodes[i];
+           
+           if (key != prev_key) {
+               if (key != 0) {
+                   // Key pressed
+                   handle_key_event(key, true);
+                   state->key_state[key] = true;
+               }
+               if (prev_key != 0 && !is_key_in_report(prev_key, report)) {
+                   // Key released
+                   handle_key_event(prev_key, false);
+                   state->key_state[prev_key] = false;
+               }
+           }
+       }
+       
+       // Update previous report
+       memcpy(&prev_report, report, sizeof(hid_keyboard_report_t));
+   }
+   
+   static bool is_key_in_report(uint8_t key, hid_keyboard_report_t *report)
+   {
+       for (int i = 0; i < 6; i++) {
+           if (report->keycodes[i] == key) {
+               return true;
+           }
+       }
+       return false;
+   }
+   
+   static void handle_modifier_change(uint8_t new_mods, uint8_t old_mods)
+   {
+       static const struct {
+           uint8_t mask;
+           uint8_t keycode;
+       } mod_map[] = {
+           {0x01, HID_KEY_CONTROL_LEFT},
+           {0x10, HID_KEY_CONTROL_RIGHT},
+           {0x02, HID_KEY_SHIFT_LEFT},
+           {0x20, HID_KEY_SHIFT_RIGHT},
+           {0x04, HID_KEY_ALT_LEFT},
+           {0x40, HID_KEY_ALT_RIGHT},
+           {0x08, HID_KEY_GUI_LEFT},
+           {0x80, HID_KEY_GUI_RIGHT}
+       };
+       
+       for (int i = 0; i < 8; i++) {
+           uint8_t mask = mod_map[i].mask;
+           if ((new_mods & mask) != (old_mods & mask)) {
+               handle_key_event(mod_map[i].keycode, (new_mods & mask) != 0);
+           }
+       }
+   }
+   ```
+
+3. Implement mouse report parsing:
+   ```c
+   static void process_mouse_report(hid_mouse_report_t *report, mouse_state_t *state)
+   {
+       static hid_mouse_report_t prev_report = {0};
+       
+       // Handle button state changes
+       uint8_t button_changes = report->buttons ^ prev_report.buttons;
+       if (button_changes) {
+           for (int i = 0; i < 5; i++) { // Support up to 5 buttons
+               if (button_changes & (1 << i)) {
+                   bool pressed = (report->buttons & (1 << i)) != 0;
+                   handle_mouse_button(i + 1, pressed);
+               }
+           }
+       }
+       
+       // Handle movement
+       if (report->x != 0 || report->y != 0) {
+           handle_mouse_move(report->x, report->y);
+       }
+       
+       // Handle wheel
+       if (report->wheel != 0) {
+           handle_mouse_wheel(report->wheel);
+       }
+       
+       // Handle pan (horizontal scroll)
+       if (report->pan != 0) {
+           handle_mouse_pan(report->pan);
+       }
+       
+       // Update previous report
+       memcpy(&prev_report, report, sizeof(hid_mouse_report_t));
+   }
+   ```
+
+4. Implement report processing and routing based on board role:
+   ```c
+   static void process_hid_report(hid_device_t *dev, const uint8_t *data, size_t length)
+   {
+       // Get board configuration
+       kvml_config_t *config = get_board_config();
+       
+       // Process report based on device capabilities
+       if (dev->caps.has_keyboard) {
+           keyboard_state_t kb_state;
+           process_keyboard_report(data, length, &kb_state);
+           
+           // Route the report based on board role
+           if (config->role == BOARD_ROLE_A) {
+               // Primary board - send directly to BLE
+               if (is_active_host()) {
+                   send_keyboard_report_ble(&kb_state);
+               }
+           } else {
+               // Secondary board - forward via UART to primary
+               uart_forward_keyboard_report(&kb_state);
+           }
+       }
+       
+       if (dev->caps.has_mouse) {
+           mouse_state_t mouse_state;
+           process_mouse_report(data, length, &mouse_state);
+           
+           // Route the report based on board role
+           if (config->role == BOARD_ROLE_A) {
+               // Primary board - send directly to BLE
+               if (is_active_host()) {
+                   send_mouse_report_ble(&mouse_state);
+               }
+           } else {
+               // Secondary board - forward via UART to primary
+               uart_forward_mouse_report(&mouse_state);
+           }
+       }
+   }
+   ```
+
+5. Implement UART forwarding protocol:
+   ```c
+   // UART message types for HID report forwarding
+   typedef enum {
+       UART_MSG_KEYBOARD_REPORT = 0x01,
+       UART_MSG_MOUSE_REPORT = 0x02,
+       UART_MSG_CONFIG_SYNC = 0x03,
+       UART_MSG_ACTIVE_HOST = 0x04
+   } uart_msg_type_t;
+   
+   // UART message header structure
+   typedef struct __attribute__((packed)) {
+       uint8_t preamble[2]; // Fixed to {0xA5, 0x5A} for message framing
+       uint8_t type;        // Message type from uart_msg_type_t
+       uint16_t length;     // Payload length
+   } uart_msg_header_t;
+   
+   // Send HID report over UART to primary board
+   static void uart_forward_keyboard_report(keyboard_state_t *kb_state)
+   {
+       uart_msg_header_t header = {
+           .preamble = {0xA5, 0x5A},
+           .type = UART_MSG_KEYBOARD_REPORT,
+           .length = sizeof(keyboard_state_t)
+       };
+       
+       // Send header
+       uart_write_bytes(UART_PORT, &header, sizeof(header));
+       
+       // Send payload
+       uart_write_bytes(UART_PORT, kb_state, sizeof(keyboard_state_t));
+       
+       // Send CRC16 (optional)
+       uint16_t crc = calculate_crc16((uint8_t*)kb_state, sizeof(keyboard_state_t));
+       uart_write_bytes(UART_PORT, &crc, sizeof(crc));
+   }
+   
+   // Send mouse report over UART to primary board
+   static void uart_forward_mouse_report(mouse_state_t *mouse_state)
+   {
+       uart_msg_header_t header = {
+           .preamble = {0xA5, 0x5A},
+           .type = UART_MSG_MOUSE_REPORT,
+           .length = sizeof(mouse_state_t)
+       };
+       
+       // Send header
+       uart_write_bytes(UART_PORT, &header, sizeof(header));
+       
+       // Send payload
+       uart_write_bytes(UART_PORT, mouse_state, sizeof(mouse_state_t));
+       
+       // Send CRC16 (optional)
+       uint16_t crc = calculate_crc16((uint8_t*)mouse_state, sizeof(mouse_state_t));
+       uart_write_bytes(UART_PORT, &crc, sizeof(crc));
+   }
+   ```
+
+6. Implement report reading task:
+   ```c
+   static void hid_device_task(void *arg)
+   {
+       hid_device_t *dev = (hid_device_t *)arg;
+       uint8_t report[64];
+       int bytes_read;
+       
+       while (true) {
+           // Read report with timeout
+           bytes_read = hid_host_device_read_raw_report(
+                                           dev->handle,
+                                           report,
+                                           sizeof(report),
+                                           0);
+           
+           if (bytes_read > 0) {
+               process_hid_report(dev, report, bytes_read);
+           } else if (bytes_read < 0 && bytes_read != -ESP_ERR_TIMEOUT) {
+               ESP_LOGE(TAG, "USB transfer error: %s", esp_err_to_name(bytes_read));
+               break;
+           }
+           
+           vTaskDelay(pdMS_TO_TICKS(1)); // Prevent CPU hogging
+       }
+       
+       // Clean up device on task exit
+       cleanup_hid_device(dev);
+       vTaskDelete(NULL);
+   }
+   ```
+
+# Test Strategy:
+1. Test with multiple keyboard layouts (QWERTY, AZERTY, etc.)
+2. Verify all modifier keys work correctly
+3. Test mouse movement, buttons, and wheel
+4. Verify no key/mouse event loss during rapid input
+5. Test with various HID report rates
+
+# Dependencies:
+- USB HID device detection (Task 2.2)
+- USB Host Library
+- HID Usage Tables specification

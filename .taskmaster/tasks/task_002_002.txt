@@ -1,0 +1,200 @@
+# Task ID: 2.2
+# Title: Develop HID Device Detection and Board Role Configuration
+# Status: pending
+# Dependencies: 2.1
+# Priority: high
+# Description: Create mechanisms to detect HID devices and configure board roles through SPIFFS.
+# Details:
+1. Implement USB device callback handlers
+2. Detect HID interface class (accounting for devices that report multiple types)
+3. Parse HID report descriptor
+4. Identify device type and capabilities
+5. Implement SPIFFS configuration for board role designation ('A' or 'B')
+6. Configure BLE only on primary board (A)
+
+# Implementation Steps:
+1. Define HID device types and state structure with support for multiple interfaces/types:
+   ```c
+   typedef enum {
+       HID_DEVICE_TYPE_NONE = 0,
+       HID_DEVICE_TYPE_KEYBOARD,
+       HID_DEVICE_TYPE_MOUSE,
+       HID_DEVICE_TYPE_COMBO,    // Device with multiple interfaces (e.g., keyboard+mouse)
+       HID_DEVICE_TYPE_OTHER
+   } hid_device_type_t;
+   
+   typedef struct {
+       bool connected;
+       hid_device_type_t type;
+       hid_host_device_handle_t handle;    // ESP-IDF HID host API handle
+       hid_host_dev_params_t params;       // Device parameters
+       // Device capabilities flags
+       struct {
+           bool has_keyboard;
+           bool has_mouse;
+       } caps;
+   } hid_device_t;
+   ```
+
+2. Implement SPIFFS configuration for board role:
+   ```c
+   #define CONFIG_FILE "/spiffs/kvml_config.json"
+   
+   typedef enum {
+       BOARD_ROLE_A,    // Primary board (implements BLE)
+       BOARD_ROLE_B     // Secondary board (forwards HID events via UART)
+   } board_role_t;
+   
+   typedef struct {
+       board_role_t role;
+       bool ble_enabled;     // Only enabled on primary board
+       char device_name[32]; // BLE device name
+       // Other config parameters
+   } kvml_config_t;
+   
+   static esp_err_t load_board_config(kvml_config_t *config)
+   {
+       // Initialize SPIFFS using the storage partition
+       esp_vfs_spiffs_conf_t spiffs_conf = {
+           .base_path = "/spiffs",
+           .partition_label = "storage", // Match partition table
+           .max_files = 5,
+           .format_if_mount_failed = true
+       };
+       ESP_ERROR_CHECK(esp_vfs_spiffs_register(&spiffs_conf));
+       
+       // Read config file
+       FILE *f = fopen(CONFIG_FILE, "r");
+       if (f == NULL) {
+           // Create default config
+           config->role = BOARD_ROLE_A;
+           config->ble_enabled = true; // Enable BLE by default for primary
+           snprintf(config->device_name, sizeof(config->device_name), "KVML-Controller");
+           save_board_config(config);
+           return ESP_OK;
+       }
+       
+       // Parse JSON config
+       // ...
+       
+       fclose(f);
+       return ESP_OK;
+   }
+   ```
+
+3. Implement USB host HID event handlers:
+   ```c
+   // Device event handler
+   static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
+                                    const hid_host_driver_event_t event,
+                                    void *arg)
+   {
+       switch (event) {
+       case HID_HOST_DRIVER_EVENT_CONNECTED:
+           // Handle device connection
+           break;
+       default:
+           break;
+       }
+   }
+   
+   // Interface event handler
+   static void hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
+                                         const hid_host_interface_event_t event,
+                                         void *arg)
+   {
+       switch (event) {
+       case HID_HOST_INTERFACE_EVENT_INPUT_REPORT:
+           // Process input reports from device
+           break;
+       case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
+           // Handle disconnection
+           break;
+       default:
+           break;
+       }
+   }
+   ```
+
+4. Develop flexible report parsing for different device formats:
+   ```c
+   static void process_input_report(const uint8_t *data, size_t length, hid_host_dev_params_t *dev_params)
+   {
+       // Process report data based on device type and report format
+       // Handle devices with custom report formats (as discovered during implementation)
+   }
+   ```
+
+# Test Strategy:
+1. Test automatic detection of both keyboard and mouse features in a single device
+2. Verify SPIFFS configuration for board role (A/B) works correctly
+3. Ensure correct parsing of HID reports from different device types
+4. Test persistence of board role configuration across reboots
+
+5. Implement conditional BLE service based on board role:
+   ```c
+   static void setup_services(kvml_config_t *config)
+   {
+       // Initialize services based on board configuration
+       if (config->role == BOARD_ROLE_B) {
+           // Secondary board - only setup UART forwarding, no BLE
+           ESP_LOGI(TAG, "Setting up board as secondary (B) - UART forwarding only");
+           setup_uart_forwarding();
+       } else {
+           // Primary board - setup BLE server and UART receiver
+           ESP_LOGI(TAG, "Setting up board as primary (A) - BLE enabled");
+           setup_ble_server(config->device_name);
+           setup_uart_receiver();
+       }
+   }
+   ```
+
+6. Add support for detecting devices with multiple interfaces:
+   ```c
+   static void handle_hid_device(hid_device_t *device)
+   {
+       // Get device parameters
+       hid_host_dev_params_t dev_params;
+       ESP_ERROR_CHECK(hid_host_device_get_params(device->handle, &dev_params));
+       
+       // Set device capabilities based on protocol and subclass
+       if (dev_params.proto == HID_PROTOCOL_KEYBOARD) {
+           device->caps.has_keyboard = true;
+           ESP_LOGI(TAG, "Keyboard capabilities detected");
+       }
+       else if (dev_params.proto == HID_PROTOCOL_MOUSE) {
+           device->caps.has_mouse = true;
+           ESP_LOGI(TAG, "Mouse capabilities detected");
+       }
+       
+       // Update device type based on capabilities
+       if (device->caps.has_keyboard && device->caps.has_mouse) {
+           device->type = HID_DEVICE_TYPE_COMBO;
+           ESP_LOGI(TAG, "Combo device detected (keyboard + mouse)");
+       } else if (device->caps.has_keyboard) {
+           device->type = HID_DEVICE_TYPE_KEYBOARD;
+       } else if (device->caps.has_mouse) {
+           device->type = HID_DEVICE_TYPE_MOUSE;
+       } else {
+           device->type = HID_DEVICE_TYPE_OTHER;
+           ESP_LOGI(TAG, "Generic HID device detected");
+       }
+       
+       // Register for input reports based on device type
+       // Configure report handling based on board role from SPIFFS config
+   }
+   ```
+
+# Test Strategy:
+1. Test automatic detection of both keyboard and mouse features in a single device
+2. Verify SPIFFS configuration for board role (A/B) works correctly
+3. Ensure correct parsing of HID reports from different device types
+4. Verify BLE is only initialized on primary board (A)
+5. Test UART forwarding from secondary board (B) to primary board
+6. Test persistence of board role configuration across reboots
+7. Test board role switching via SPIFFS configuration
+
+# Dependencies:
+- ESP-IDF USB Host and HID Host libraries
+- SPIFFS for configuration storage
+- BLE stack for inter-board communication

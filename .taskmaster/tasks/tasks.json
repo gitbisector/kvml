@@ -1,0 +1,1027 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Project Setup and ESP-IDF Configuration",
+      "description": "Initialize the project repository with ESP-IDF framework, configure the build system, and set up the partition table as specified in the PRD.",
+      "details": "1. Create a new ESP-IDF project using the latest stable version\n2. Configure CMakeLists.txt for dual ESP32-S3 target\n3. Implement the partition table as specified in PRD:\n   - nvs: 24KB for BLE bonding keys and config\n   - ota_0: 1.5MB for firmware slot 1\n   - ota_1: 1.5MB for firmware slot 2\n   - spiffs: 512KB for Web UI and config files\n4. Set up project structure with common code and board-specific modules\n5. Configure logging levels and debug output\n6. Initialize git repository with appropriate .gitignore",
+      "testStrategy": "Verify build system works for both ESP32-S3 boards. Test flash operations to ensure partition table is correctly applied. Validate that both boards can be programmed with the same firmware binary.",
+      "priority": "high",
+      "dependencies": [],
+      "status": "done",
+      "subtasks": []
+    },
+    {
+      "id": 2,
+      "title": "USB Host Implementation for HID Devices",
+      "description": "Implement USB host functionality to detect and interface with USB HID devices that may report as both keyboard and mouse simultaneously.",
+      "status": "done",
+      "dependencies": [
+        1
+      ],
+      "priority": "high",
+      "details": "1. Initialize USB host library for ESP32-S3\n2. Implement device detection logic to identify HID devices\n3. Create handlers for HID devices that can report as both keyboard and mouse\n4. Implement HID report parsing for standard keyboard and mouse reports from the same device\n5. Create state machine for USB device connection/disconnection events\n6. Store device state in memory for forwarding to BLE interface\n7. Add error handling for unexpected USB events\n\nCode structure:\n```c\ntypedef struct {\n    bool connected;\n    uint8_t device_capabilities; // Bitmask: DEVICE_CAP_KEYBOARD | DEVICE_CAP_MOUSE\n    hid_device_info_t device_info;\n    // Device state (key presses, mouse buttons, etc.)\n} usb_device_state_t;\n\nvoid usb_host_task(void *pvParameters);\nvoid usb_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);\n```",
+      "testStrategy": "Test with various USB HID devices including those that report as both keyboard and mouse simultaneously. Verify that the system correctly identifies device capabilities at runtime. Test hot-plugging scenarios and error recovery.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement USB Host Initialization",
+          "description": "Set up the USB host library for ESP32-S3 and configure necessary parameters.",
+          "dependencies": [],
+          "details": "Initialize USB host library, set up configuration parameters, enable USB OTG mode, and start the USB host task.",
+          "status": "done",
+          "testStrategy": "Verify successful initialization by checking return values and logs."
+        },
+        {
+          "id": 2,
+          "title": "Develop HID Device Detection Logic",
+          "description": "Create a mechanism to detect and identify HID devices and their capabilities when connected.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement device detection logic in the USB event handler, focusing on identifying HID devices and their capabilities (keyboard, mouse, or both).",
+          "status": "done",
+          "testStrategy": "Test with various HID devices and verify correct identification of capabilities."
+        },
+        {
+          "id": 3,
+          "title": "Implement HID Report Parsing",
+          "description": "Create functions to parse standard HID reports for devices that may report as both keyboard and mouse.",
+          "dependencies": [
+            2
+          ],
+          "details": "Develop parsing functions for HID reports that can handle devices reporting as both keyboard and mouse simultaneously, extracting relevant information such as key presses, mouse movements, and button clicks.",
+          "status": "done",
+          "testStrategy": "Use sample HID reports to verify correct parsing of device inputs from combination devices."
+        },
+        {
+          "id": 4,
+          "title": "Create Device State Management",
+          "description": "Implement a system to manage and store the state of connected USB devices with multiple capabilities.",
+          "dependencies": [
+            2,
+            3
+          ],
+          "details": "Use the usb_device_state_t struct to store device information, connection status, capabilities, and current state. Implement functions to update and retrieve device states.",
+          "status": "done",
+          "testStrategy": "Test state management with mock device connections and inputs from multi-capability devices."
+        },
+        {
+          "id": 5,
+          "title": "Develop Connection/Disconnection Handler",
+          "description": "Create a state machine to handle USB device connection and disconnection events.",
+          "dependencies": [
+            1,
+            2,
+            4
+          ],
+          "details": "Implement a state machine in the USB event handler to manage device lifecycle events, including connection, disconnection, and runtime device capability detection.",
+          "status": "done",
+          "testStrategy": "Simulate various connection/disconnection scenarios and verify correct state transitions."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "BLE HID Device Profile Implementation",
+      "description": "Implement Bluetooth Low Energy HID device profile with support for multiple simultaneous host connections per board.",
+      "status": "done",
+      "dependencies": [
+        1
+      ],
+      "priority": "high",
+      "details": "1. Initialize BLE stack with static MAC address configuration\n2. Implement HID over GATT profile according to BLE specification\n3. Create HID descriptor for keyboard and mouse functionality\n4. Implement report map and report characteristics\n5. Set up device information service with manufacturer data\n6. Implement battery service (optional)\n7. Configure static device name based on board identity\n8. Store bonding information in NVS\n9. Support multiple simultaneous BLE host connections\n\nCode structure:\n```c\ntypedef struct {\n    bool connected;\n    uint16_t conn_id;\n    esp_bd_addr_t remote_bda;\n    bool hid_control_enabled;\n    // HID state tracking\n} ble_host_conn_t;\n\ntypedef struct {\n    ble_host_conn_t connections[MAX_BLE_CONNECTIONS];\n    uint8_t active_connections;\n    // Connection management data\n} ble_hid_dev_state_t;\n\nvoid ble_hid_init(void);\nvoid ble_hid_send_keyboard_report(uint8_t conn_idx, uint8_t *report, size_t report_len);\nvoid ble_hid_send_mouse_report(uint8_t conn_idx, uint8_t *report, size_t report_len);\n```",
+      "testStrategy": "Test BLE pairing with various host computers (Windows, macOS, Linux) simultaneously. Verify HID descriptor is correctly interpreted by hosts. Test persistence of bonding information across reboots. Validate that the BLE identity remains static.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement BLE HID Keyboard Functionality",
+          "description": "Develop the keyboard functionality for the BLE HID device profile",
+          "dependencies": [],
+          "details": "Create keyboard report descriptor, implement key press/release detection, and send keyboard reports using ble_hid_send_keyboard_report function\n<info added on 2025-06-09T01:38:25.405Z>\nSignificant progress made on BLE HID keyboard functionality:\n\n1. **Enhanced keyboard header** (ble_hid_keyboard.h):\n   - Added comprehensive keyboard key definitions (HID_KEY_A through F12, arrows, etc.)\n   - Added modifier definitions (CTRL, SHIFT, ALT, GUI)\n   - Added function prototypes for key press/release, typing, and reporting\n\n2. **Implemented keyboard logic** (ble_hid_keyboard.c):\n   - Created keyboard state tracking structure\n   - Implemented key press/release functions with proper state management\n   - Added support for up to 6 simultaneous keys (standard USB HID limit)\n   - Implemented string typing functionality\n   - Added proper keyboard report generation\n\n3. **Updated USB host** (usb_host.c):\n   - Enhanced keyboard report callback to properly parse USB HID keyboard reports\n   - Added forwarding of USB keyboard input to BLE keyboard functions\n   - Maintained legacy scroll wheel support from keyboard interface\n   - Improved error handling and logging\n\n4. **Build system**: \n   - Fixed compilation conflicts between mouse and keyboard modules\n   - Successfully built firmware with keyboard support\n\n**Current status**: \n- USB keyboard input is being detected and parsed correctly\n- Keyboard reports are being forwarded to BLE functions\n- However, actual BLE keyboard service characteristics are not yet implemented\n- The system currently logs \"Keyboard service not yet implemented - report not sent\"\n\n**Next steps needed**:\n- Implement actual BLE keyboard service with proper characteristics\n- Add keyboard report descriptor to BLE GATT services\n- Enable keyboard report transmission over BLE\n- Test end-to-end USB keyboard → BLE keyboard functionality\n</info added on 2025-06-09T01:38:25.405Z>\n<info added on 2025-06-10T01:47:30.847Z>\n<info added on 2025-06-10T14:22:10.405Z>\nCompleted major refactor of USB HID device detection and report routing:\n\n1. **Eliminated device-level classification**:\n   - Removed previous approach that categorized entire USB devices as either keyboard or mouse\n   - Implemented content-based analysis that examines each individual USB HID report\n   - System now identifies report type based on content rather than source device\n\n2. **Improved report routing logic**:\n   - Mouse button and scroll wheel events from keyboard interfaces now properly route to BLE mouse reports\n   - Keyboard events route to BLE keyboard reports\n   - System correctly handles events regardless of which physical device generated them\n\n3. **Enhanced composite device support**:\n   - Properly handles devices that present both keyboard and mouse interfaces\n   - Correctly processes multi-function devices (e.g., keyboards with integrated trackpads/trackballs)\n   - Maintains proper state tracking for each input type\n\n4. **Implementation details**:\n   - Refactored usb_host.c to use report descriptor parsing for classification\n   - Added report type detection functions in usb_hid_parser.c\n   - Updated callback handlers to route based on report content\n   - Improved error handling for malformed reports\n\nThis refactoring significantly improves the robustness of the USB-to-BLE bridging functionality, ensuring all input events are properly categorized and transmitted regardless of their source device.\n</info added on 2025-06-10T14:22:10.405Z>\n</info added on 2025-06-10T01:47:30.847Z>",
+          "status": "done",
+          "testStrategy": "Test various key combinations and verify correct HID reports are sent"
+        },
+        {
+          "id": 2,
+          "title": "Implement BLE HID Mouse Functionality",
+          "description": "Develop the mouse functionality for the BLE HID device profile",
+          "dependencies": [],
+          "details": "Create mouse report descriptor, implement pointer movement detection, and send mouse reports using ble_hid_send_mouse_report function",
+          "status": "done",
+          "testStrategy": "Test mouse movements and verify correct HID reports are sent"
+        },
+        {
+          "id": 3,
+          "title": "Implement Device Information and Battery Services",
+          "description": "Set up device information service with manufacturer data and implement optional battery service",
+          "dependencies": [],
+          "details": "Configure static device name based on board identity, implement device information service, and add battery service with level reporting",
+          "status": "done",
+          "testStrategy": "Verify device information and battery level can be read by host devices"
+        },
+        {
+          "id": 4,
+          "title": "Implement Bonding and Security Features",
+          "description": "Set up secure bonding and implement storage of bonding information in NVS",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Implement BLE security manager, handle pairing requests, and store bonding keys in Non-Volatile Storage (NVS)",
+          "status": "done",
+          "testStrategy": "Test pairing process and verify reconnection works without re-pairing"
+        },
+        {
+          "id": 5,
+          "title": "Implement Multiple Host Connection Support",
+          "description": "Add support for connecting to multiple BLE hosts simultaneously",
+          "dependencies": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "details": "Extend the BLE stack to handle multiple simultaneous connections. Implement connection management using the ble_host_conn_t structure and track active connections. Modify report sending functions to target specific connections.\n<info added on 2025-06-10T04:32:47.123Z>\nImplement single host connection management for the BLE stack. Each ESP32 board will maintain one dedicated connection to a specific host device. Configure the BLE stack to establish and maintain a reliable connection with its designated host. Implement UART communication between the two ESP32 boards to coordinate which board should be actively sending input reports based on the selected host. Ensure seamless handoff of input control between the boards when the active host changes. Modify report sending functions to work with the single connection model while supporting the dual-ESP32 architecture.\n</info added on 2025-06-10T04:32:47.123Z>",
+          "status": "done",
+          "testStrategy": "Test connecting to multiple hosts simultaneously and verify correct report delivery to each host"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "UART Communication Protocol Implementation",
+      "description": "Develop the UART protocol for communication between the two ESP32-S3 boards, including frame structure, message types, and error handling.",
+      "status": "done",
+      "dependencies": [
+        1
+      ],
+      "priority": "high",
+      "details": "1. Define binary frame structure: preamble, type, length, payload, CRC16\n2. Implement message types: BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT\n3. Create UART initialization with appropriate baud rate (recommend 921600)\n4. Implement transmit and receive buffers with proper synchronization\n5. Add CRC16 calculation and verification\n6. Implement basic ACK mechanism for reliable transmission\n7. Create error recovery for frame corruption\n\nFrame structure:\n```c\ntypedef struct {\n    uint8_t preamble[2]; // Fixed value, e.g., 0xAA, 0x55\n    uint8_t type;        // Message type\n    uint16_t length;     // Payload length\n    uint8_t payload[0];  // Variable length payload\n    // CRC16 follows payload\n} __attribute__((packed)) uart_frame_t;\n\nenum {\n    FRAME_TYPE_BOARD_STATE = 0x01,\n    FRAME_TYPE_INPUT_KEY = 0x02,\n    FRAME_TYPE_INPUT_MOUSE = 0x03,\n    FRAME_TYPE_HEARTBEAT = 0x04,\n    FRAME_TYPE_ACK = 0xF0,\n    FRAME_TYPE_NACK = 0xF1\n};\n```",
+      "testStrategy": "Test UART communication with various message types and payloads. Verify CRC16 error detection by introducing corrupted frames. Test recovery from frame loss. Measure throughput and latency to ensure performance meets requirements.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement UART Initialization and Configuration",
+          "description": "Set up the UART hardware with the appropriate baud rate and pin configuration for both ESP32-S3 boards.",
+          "dependencies": [],
+          "details": "Initialize UART with 921600 baud rate, 8 data bits, no parity, 1 stop bit. Configure TX and RX pins according to the ESP32-S3 pinout. Enable UART interrupts for efficient data handling.",
+          "status": "done",
+          "testStrategy": "Verify UART configuration using oscilloscope to check baud rate and signal integrity."
+        },
+        {
+          "id": 2,
+          "title": "Develop Frame Encoding and Decoding Functions",
+          "description": "Create functions to encode and decode UART frames according to the defined structure, including preamble, type, length, payload, and CRC16.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement encode_frame() and decode_frame() functions. Use the uart_frame_t struct and FRAME_TYPE_* enums. Ensure proper byte ordering and alignment. Include CRC16 calculation and verification in these functions.",
+          "status": "done",
+          "testStrategy": "Unit test with various frame types and payloads, verifying correct encoding and decoding."
+        },
+        {
+          "id": 3,
+          "title": "Implement Transmit and Receive Buffers",
+          "description": "Create circular buffers for UART transmit and receive operations with proper synchronization mechanisms.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement tx_buffer and rx_buffer as circular buffers. Use mutexes or critical sections for thread-safe access. Include functions for buffer management: buffer_write(), buffer_read(), buffer_available().",
+          "status": "done",
+          "testStrategy": "Stress test buffers with high-frequency read/write operations, ensuring no data loss or race conditions."
+        },
+        {
+          "id": 4,
+          "title": "Develop Message Type Handlers",
+          "description": "Create handler functions for each message type (BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT) to process incoming frames and generate appropriate responses.",
+          "dependencies": [
+            2,
+            3
+          ],
+          "details": "Implement separate handler functions for each FRAME_TYPE_*. Include logic for processing payloads and generating response frames. Integrate with the main application logic for actions like input processing and board state updates.",
+          "status": "done",
+          "testStrategy": "Create mock inputs for each message type and verify correct handling and response generation."
+        },
+        {
+          "id": 5,
+          "title": "Implement Basic ACK Mechanism and Error Recovery",
+          "description": "Develop a simple acknowledgment system and error recovery for frame corruption.",
+          "dependencies": [
+            2,
+            3,
+            4
+          ],
+          "details": "Implement a basic ACK system using FRAME_TYPE_ACK and FRAME_TYPE_NACK. Create error recovery procedures for handling frame corruption, including re-synchronization of communication.",
+          "status": "done",
+          "testStrategy": "Simulate various error conditions (packet loss, corruption) and verify successful recovery and data integrity."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Board Role Configuration",
+      "description": "Implement hotkey detection and switching logic for peer-to-peer ESP32-S3 boards to coordinate host switching.",
+      "status": "done",
+      "dependencies": [
+        1,
+        4
+      ],
+      "priority": "high",
+      "details": "1. Implement Ctrl+Ctrl hotkey detection logic (two left Ctrl presses in quick succession)\n2. Set up UART communication between peer boards\n3. Implement coordination protocol for host switching\n4. Configure event handlers for hotkey events\n5. Implement state management for active host connections\n6. Add visual feedback using CapsLock LED blinking\n\nPossible implementation:\n```c\n// In a hotkey_switch.h file\n// Hotkey combinations\n#define HOTKEY_COMBO_CTRL 0x01\n\n// Communication protocol commands\n#define CMD_SWITCH_REQUEST 0x10\n#define CMD_SWITCH_ACK 0x11\n\n// Helper functions\nvoid detect_hotkey(uint8_t key_code);\nvoid process_switch_request(void);\nvoid notify_peer_board(uint8_t command);\nvoid toggle_capslock_led(bool is_capslock_on);\n```",
+      "testStrategy": "Test Ctrl+Ctrl hotkey detection with various timing scenarios. Verify that boards properly coordinate switching via UART. Test the complete switching sequence between hosts with both boards connected. Verify CapsLock LED blinking provides clear visual feedback during host switching.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Hotkey Detection Logic",
+          "description": "Create logic to detect Ctrl+Ctrl hotkey combination (two left Ctrl presses in quick succession).",
+          "dependencies": [],
+          "details": "Implement a key tracking system that can detect when the left Ctrl key is pressed twice in quick succession. Create a detect_hotkey() function that processes incoming key codes, tracks timing between presses, and identifies the Ctrl+Ctrl hotkey combination.",
+          "status": "done",
+          "testStrategy": "Test with various timing between Ctrl key presses to ensure reliable detection. Verify that normal typing and other modifier key combinations don't trigger false positives."
+        },
+        {
+          "id": 2,
+          "title": "Implement Peer-to-Peer UART Communication",
+          "description": "Set up UART communication between peer ESP32-S3 boards for coordination.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement bidirectional UART communication between boards. Create functions to send and receive commands related to host switching. Define a simple protocol for coordination messages.",
+          "status": "done",
+          "testStrategy": "Test UART communication between two boards to ensure reliable message passing. Verify that commands are correctly sent and received."
+        },
+        {
+          "id": 3,
+          "title": "Implement Host Switching Coordination Protocol",
+          "description": "Create a protocol for boards to coordinate which board controls which host.",
+          "dependencies": [
+            2
+          ],
+          "details": "Implement a state machine to manage the switching process. Create functions to request a switch, acknowledge a switch request, and complete the switching process. Ensure both boards maintain consistent state about which board is connected to which host.",
+          "status": "done",
+          "testStrategy": "Test the complete switching sequence between two boards. Verify that both boards correctly update their states and connections during switching."
+        },
+        {
+          "id": 4,
+          "title": "Configure Hotkey Event Handlers",
+          "description": "Implement and register event handlers for Ctrl+Ctrl hotkey detection and processing.",
+          "dependencies": [
+            1
+          ],
+          "details": "Create event handlers that respond to detected Ctrl+Ctrl hotkey combinations. Register these handlers with the keyboard input processing system. Implement the logic to initiate the switching process when the hotkey is detected.",
+          "status": "done",
+          "testStrategy": "Trigger Ctrl+Ctrl hotkey combinations and verify that the correct event handlers are called. Test the complete flow from hotkey detection to switch initiation."
+        },
+        {
+          "id": 5,
+          "title": "Implement Host Connection State Management",
+          "description": "Create a system to track and manage which board is connected to which host.",
+          "dependencies": [
+            3
+          ],
+          "details": "Implement state tracking to maintain awareness of current connections. Create functions to update connection state when switching occurs. Ensure proper routing of keyboard and mouse inputs based on the current state.",
+          "status": "done",
+          "testStrategy": "Test state transitions during host switching. Verify that inputs are correctly routed to the appropriate host based on the current state."
+        },
+        {
+          "id": 6,
+          "title": "Implement CapsLock LED Feedback Mechanism",
+          "description": "Implement visual feedback using CapsLock LED to indicate when host switching occurs.",
+          "dependencies": [
+            3,
+            5
+          ],
+          "details": "Add CapsLock LED blinking as a visual indicator for host switching. When CapsLock is off, briefly turn the LED on; when CapsLock is on, briefly turn the LED off. Implement USB host functionality to control keyboard LEDs via HID output reports. Create functions to trigger the LED feedback when switching occurs.",
+          "status": "done",
+          "testStrategy": "Verify that CapsLock LED blinks correctly during host switching events. Test the feedback with different CapsLock states (on/off). Ensure the visual feedback is obvious and noticeable to users."
+        },
+        {
+          "id": 7,
+          "title": "Implement USB HID Output Reports for LED Control",
+          "description": "Add support for sending HID output reports to control keyboard LEDs.",
+          "dependencies": [
+            6
+          ],
+          "details": "Extend the USB host functionality to support sending HID output reports to the keyboard. Implement functions to read the current LED state, toggle the CapsLock LED, and restore the original state. Ensure proper timing for the blinking effect to make it noticeable but not disruptive.",
+          "status": "done",
+          "testStrategy": "Test sending HID output reports to control keyboard LEDs. Verify that the CapsLock LED can be toggled programmatically. Test the blinking timing to ensure it provides clear visual feedback."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Input Routing Logic Implementation",
+      "description": "Develop the logic for routing input events between the two ESP32-S3 boards based on active host selection.",
+      "status": "done",
+      "dependencies": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "priority": "high",
+      "details": "1. Implement state machine for tracking active host (A or B)\n2. Create logic for forwarding keyboard/mouse events between boards based on active host\n3. Implement compile-time defined hotkey detection for manual host switching\n4. Ensure proper state flushing when switching hosts (release all keys/buttons)\n5. Implement debounce mechanism for hotkey detection\n\nState machine:\n```c\ntypedef enum {\n    HOST_A_ACTIVE = 0,\n    HOST_B_ACTIVE = 1\n} active_host_t;\n\nvoid set_active_host(active_host_t host);\nactive_host_t get_active_host(void);\nvoid flush_input_state(void);\nbool detect_host_switch_hotkey(uint8_t key, bool pressed);\n```\n\nHotkey definition:\n```c\n// In config.h\n#define HOST_SWITCH_KEY KEY_PRINTSCREEN\n#define HOST_SWITCH_DOUBLE_TAP_MS 500\n```",
+      "testStrategy": "Test host switching with hotkey detection. Verify that all keys/buttons are properly released when switching hosts. Test edge cases such as rapid switching and boundary conditions.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Active Host State Machine",
+          "description": "Create a state machine to track and manage the active host (A or B) using the provided enum and functions.",
+          "dependencies": [],
+          "details": "Use the active_host_t enum and implement set_active_host() and get_active_host() functions. Ensure proper state transitions between HOST_A_ACTIVE and HOST_B_ACTIVE.",
+          "status": "done",
+          "testStrategy": "Write unit tests to verify correct state transitions and retrieval of active host state."
+        },
+        {
+          "id": 2,
+          "title": "Develop Input Event Forwarding Logic",
+          "description": "Implement the logic for forwarding keyboard and mouse events between boards based on the active host.",
+          "dependencies": [
+            1
+          ],
+          "details": "Create functions to handle input events, check the active host state, and forward events to the appropriate board when necessary. Use the UART communication protocol for inter-board communication.",
+          "status": "done",
+          "testStrategy": "Simulate input events and verify correct forwarding behavior based on active host state."
+        },
+        {
+          "id": 3,
+          "title": "Implement Compile-Time Hotkey Configuration",
+          "description": "Develop logic to detect hotkey presses based on compile-time configuration for manual host switching.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement detect_host_switch_hotkey() function to recognize the configured hotkey. Use the HOST_SWITCH_KEY and HOST_SWITCH_DOUBLE_TAP_MS constants from config.h. Include timing logic for double-tap detection.",
+          "status": "done",
+          "testStrategy": "Test with various key press patterns to ensure reliable hotkey detection and proper host switching."
+        },
+        {
+          "id": 4,
+          "title": "Add Manual Host Selection Override",
+          "description": "Implement a mechanism for manual override of host selection using the detected hotkey.",
+          "dependencies": [
+            1,
+            3
+          ],
+          "details": "Create functions for manual host selection that are triggered by the hotkey detection. Implement a way to toggle between hosts using the hotkey.",
+          "status": "done",
+          "testStrategy": "Verify that manual selection works correctly when the hotkey is detected."
+        },
+        {
+          "id": 5,
+          "title": "Implement State Flushing and Debounce Mechanism",
+          "description": "Develop logic to flush input state when switching hosts and implement a debounce mechanism for hotkey detection.",
+          "dependencies": [
+            1,
+            2,
+            3
+          ],
+          "details": "Implement the flush_input_state() function to release all keys and buttons when switching hosts. Create a debounce mechanism to prevent false hotkey detections.",
+          "status": "done",
+          "testStrategy": "Test state flushing by simulating host switches with active inputs. Verify debounce functionality by rapidly pressing the hotkey."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Web Server Implementation for Configuration UI",
+      "description": "Implement a web server on the primary board to host the configuration interface for the multiplexer system.",
+      "status": "deferred",
+      "dependencies": [
+        1,
+        5
+      ],
+      "priority": "low",
+      "details": "1. Initialize ESP-IDF HTTP server component\n2. Mount SPIFFS filesystem for web content\n3. Implement API endpoints for configuration:\n   - GET /api/status - System status\n   - POST /api/host - Set active host\n   - GET/POST /api/config - Get/set board roles\n   - POST /api/ota - Upload firmware\n4. Create HTML/CSS/JS files for web interface\n5. Implement WebSocket for real-time updates (optional)\n6. Add authentication for security\n\nAPI structure:\n```c\n// Status response format\ntypedef struct {\n    active_host_t active_host;\n    board_role_t board_role;\n    bool keyboard_connected;\n    bool mouse_connected;\n    uint8_t ble_connections;\n    char version[16];\n} system_status_t;\n\n// Configuration format\ntypedef struct {\n    board_role_t board_role;\n    bool hotkey_enabled;\n    uint8_t hotkey_code;\n    uint16_t hotkey_timeout_ms;\n} system_config_t;\n```",
+      "testStrategy": "Test web interface with different browsers. Verify all API endpoints function correctly. Test configuration changes persist across reboots. Validate security measures prevent unauthorized access.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Initialize ESP-IDF HTTP Server",
+          "description": "Set up and configure the ESP-IDF HTTP server component on the primary board.",
+          "dependencies": [],
+          "details": "1. Include necessary ESP-IDF components\n2. Initialize the HTTP server\n3. Configure server settings (port, max connections)\n4. Start the HTTP server",
+          "status": "pending",
+          "testStrategy": "Verify server initialization and successful start using ESP-IDF logging"
+        },
+        {
+          "id": 2,
+          "title": "Implement SPIFFS Filesystem Integration",
+          "description": "Mount the SPIFFS filesystem to serve static web content for the configuration interface.",
+          "dependencies": [
+            1
+          ],
+          "details": "1. Initialize SPIFFS\n2. Mount SPIFFS filesystem\n3. Configure HTTP server to serve static files from SPIFFS\n4. Implement error handling for file operations",
+          "status": "pending",
+          "testStrategy": "Test accessing static files through HTTP requests"
+        },
+        {
+          "id": 3,
+          "title": "Develop API Endpoints",
+          "description": "Implement the required API endpoints for system configuration and status.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "1. Implement GET /api/status endpoint using system_status_t structure\n2. Implement POST /api/host endpoint for setting active host\n3. Implement GET/POST /api/config endpoints using system_config_t structure\n4. Implement POST /api/ota endpoint for firmware updates\n5. Add proper error handling and response codes",
+          "status": "pending",
+          "testStrategy": "Use tools like cURL or Postman to test each API endpoint"
+        },
+        {
+          "id": 4,
+          "title": "Create Web Interface Files",
+          "description": "Develop the HTML, CSS, and JavaScript files for the configuration web interface.",
+          "dependencies": [
+            2
+          ],
+          "details": "1. Design responsive HTML structure\n2. Create CSS for styling and layout\n3. Implement JavaScript for dynamic content and API interactions\n4. Optimize assets for embedded system constraints",
+          "status": "pending",
+          "testStrategy": "Test interface in multiple browsers and screen sizes"
+        },
+        {
+          "id": 5,
+          "title": "Implement Authentication and WebSocket",
+          "description": "Add authentication for security and implement WebSocket for real-time updates.",
+          "dependencies": [
+            1,
+            3,
+            4
+          ],
+          "details": "1. Implement user authentication system\n2. Secure all API endpoints with authentication\n3. Set up WebSocket server for real-time communication\n4. Implement WebSocket handlers for pushing updates to clients\n5. Update web interface to use WebSocket for live data",
+          "status": "pending",
+          "testStrategy": "Test authentication flow and verify real-time updates via WebSocket"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "SPIFFS and Configuration Management",
+      "description": "Implement SPIFFS filesystem for storing web UI assets, system configuration, and board roles, with functions to load/save settings.",
+      "status": "deferred",
+      "dependencies": [
+        1,
+        7
+      ],
+      "priority": "low",
+      "details": "1. Initialize SPIFFS with the configured partition\n2. Create directory structure for web assets and configuration\n3. Implement functions to load/save configuration as JSON\n4. Add default configuration for first boot\n5. Implement configuration versioning for future compatibility\n6. Create backup/restore functionality\n7. Store board role configuration persistently\n\nConfiguration management:\n```c\nbool config_init(void);\nbool config_load(system_config_t *config);\nbool config_save(const system_config_t *config);\nvoid config_set_defaults(system_config_t *config);\nbool config_save_board_role(board_role_t role);\nboard_role_t config_load_board_role(void);\n```\n\nFile structure:\n```\n/spiffs\n  /web           # Web UI files\n    index.html\n    style.css\n    script.js\n  /config        # Configuration files\n    system.json  # System configuration\n    role.json    # Board role configuration\n```",
+      "testStrategy": "Test configuration load/save with various settings. Verify defaults are applied on first boot. Test configuration persistence across reboots and power cycles. Validate error handling for corrupted configuration files.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Initialize SPIFFS and Create Directory Structure",
+          "description": "Set up the SPIFFS filesystem and create the necessary directory structure for web assets and configuration files.",
+          "dependencies": [],
+          "details": "Use esp_vfs_spiffs_register() to mount SPIFFS. Create /web and /config directories. Handle potential errors during initialization.",
+          "status": "pending",
+          "testStrategy": "Verify SPIFFS mount success and directory existence using file I/O operations."
+        },
+        {
+          "id": 2,
+          "title": "Implement Configuration Management Functions",
+          "description": "Develop functions for initializing, loading, saving, and setting default configurations.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement config_init(), config_load(), config_save(), and config_set_defaults() functions as per the provided C function prototypes. Use cJSON library for JSON parsing and generation.",
+          "status": "pending",
+          "testStrategy": "Create unit tests for each function, covering success and failure scenarios."
+        },
+        {
+          "id": 3,
+          "title": "Implement Board Role Configuration Functions",
+          "description": "Create functions to save and load board role configuration to/from SPIFFS.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Implement config_save_board_role() and config_load_board_role() functions to store and retrieve the board role from SPIFFS. Include error handling and default role assignment.",
+          "status": "pending",
+          "testStrategy": "Test saving and loading board role configuration. Verify persistence across reboots."
+        },
+        {
+          "id": 4,
+          "title": "Add Version Control to Configuration",
+          "description": "Implement a versioning system for the configuration to ensure future compatibility.",
+          "dependencies": [
+            2,
+            3
+          ],
+          "details": "Add a version field to the system_config_t struct. Implement a function to update configuration structure when loading older versions. Store the current version in the JSON config file.",
+          "status": "pending",
+          "testStrategy": "Test loading configurations with different versions and verify correct upgrades."
+        },
+        {
+          "id": 5,
+          "title": "Develop Backup and Restore Functionality",
+          "description": "Create functions to backup the current configuration and restore from a backup.",
+          "dependencies": [
+            2,
+            3,
+            4
+          ],
+          "details": "Implement backup_config() and restore_config() functions. Use separate files for backups (e.g., /config/backup.json, /config/role_backup.json). Include version information in backups.",
+          "status": "pending",
+          "testStrategy": "Test backup creation, verify its contents, and test restoration process."
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "OTA Update System for Primary Board",
+      "description": "Implement OTA (Over-The-Air) firmware update capability for the primary board via the web interface.",
+      "status": "deferred",
+      "dependencies": [
+        7,
+        8
+      ],
+      "priority": "low",
+      "details": "1. Implement HTTP-based OTA update handler\n2. Add firmware validation (signature, CRC, etc.)\n3. Create update state machine with proper error handling\n4. Implement rollback capability for failed updates\n5. Add progress reporting to web interface\n6. Ensure atomic update process\n\nOTA process:\n```c\ntypedef enum {\n    OTA_STATE_IDLE,\n    OTA_STATE_START,\n    OTA_STATE_IN_PROGRESS,\n    OTA_STATE_VERIFYING,\n    OTA_STATE_REBOOTING,\n    OTA_STATE_ERROR\n} ota_state_t;\n\nbool ota_begin(void);\nbool ota_write(const uint8_t *data, size_t len);\nbool ota_end(bool validate);\nvoid ota_abort(void);\nfloat ota_get_progress(void);\n```",
+      "testStrategy": "Test OTA update with valid and invalid firmware images. Verify rollback functionality works when updates fail. Test interrupted updates to ensure system remains bootable. Validate progress reporting accuracy.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement HTTP-based OTA update handler",
+          "description": "Create an HTTP endpoint to receive firmware updates and initiate the OTA process",
+          "dependencies": [],
+          "details": "Use ESP-IDF's HTTP server library to create a POST endpoint for firmware uploads. Implement request parsing and validation.",
+          "status": "pending",
+          "testStrategy": "Send test HTTP requests with dummy firmware data and verify correct handling"
+        },
+        {
+          "id": 2,
+          "title": "Implement firmware validation",
+          "description": "Add signature verification and CRC checks for uploaded firmware",
+          "dependencies": [
+            1
+          ],
+          "details": "Use cryptographic libraries to verify firmware signatures. Implement CRC32 calculation for integrity checks.",
+          "status": "pending",
+          "testStrategy": "Test with both valid and invalid firmware files to ensure proper validation"
+        },
+        {
+          "id": 3,
+          "title": "Create OTA state machine",
+          "description": "Implement the OTA state machine with proper error handling and progress tracking",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Use the provided ota_state_t enum and implement state transitions. Integrate with ota_begin(), ota_write(), ota_end(), and ota_abort() functions.",
+          "status": "pending",
+          "testStrategy": "Simulate various OTA scenarios and verify correct state transitions and error handling"
+        },
+        {
+          "id": 4,
+          "title": "Implement rollback capability",
+          "description": "Add functionality to revert to the previous firmware version if an update fails",
+          "dependencies": [
+            3
+          ],
+          "details": "Implement a dual-partition scheme for firmware storage. Add logic to switch between partitions on boot if an update fails.",
+          "status": "pending",
+          "testStrategy": "Simulate failed updates and verify automatic rollback to previous firmware"
+        },
+        {
+          "id": 5,
+          "title": "Integrate OTA progress reporting with web interface",
+          "description": "Add real-time progress updates to the web interface during OTA updates",
+          "dependencies": [
+            3
+          ],
+          "details": "Implement a WebSocket connection to send progress updates. Use ota_get_progress() function to retrieve current progress.",
+          "status": "pending",
+          "testStrategy": "Perform OTA updates and verify accurate progress reporting on the web interface"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "OTA Relay System for Secondary Board",
+      "description": "Implement the OTA relay system that allows the primary board to update the secondary board's firmware over UART.",
+      "status": "deferred",
+      "dependencies": [
+        4,
+        9
+      ],
+      "priority": "low",
+      "details": "1. Extend OTA system to handle secondary board updates\n2. Implement UART protocol messages for OTA (OTA_START, OTA_DATA, OTA_END)\n3. Create chunking mechanism for firmware transfer\n4. Add progress tracking and error handling\n5. Implement verification of transferred firmware\n6. Coordinate reboot sequence after successful update\n\nUART OTA protocol:\n```c\ntypedef struct {\n    uint32_t total_size;    // Total firmware size\n    uint32_t chunk_size;    // Size of each chunk\n    uint32_t fw_version;    // Firmware version\n} ota_start_t;\n\ntypedef struct {\n    uint32_t chunk_index;   // Chunk number\n    uint32_t data_len;      // Length of this chunk\n    uint8_t data[0];        // Chunk data\n} ota_data_t;\n\ntypedef struct {\n    uint32_t crc32;         // CRC32 of entire firmware\n    bool success;           // Success flag\n} ota_end_t;\n```",
+      "testStrategy": "Test OTA relay with various firmware sizes. Verify error handling for interrupted transfers. Test CRC validation of transferred firmware. Validate that both boards update successfully and maintain synchronization.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement UART OTA Protocol Handler",
+          "description": "Develop the UART protocol handler for OTA messages (OTA_START, OTA_DATA, OTA_END) on both primary and secondary boards.",
+          "dependencies": [],
+          "details": "Create functions to send and receive OTA_START, OTA_DATA, and OTA_END messages using the provided struct definitions. Implement error checking and validation for each message type.",
+          "status": "pending",
+          "testStrategy": "Unit test each message handler function with valid and invalid inputs. Perform integration tests with mock UART data."
+        },
+        {
+          "id": 2,
+          "title": "Develop Firmware Chunking Mechanism",
+          "description": "Create a system to break down the firmware into chunks for transmission over UART and reassemble on the receiving end.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement functions to split firmware into chunks based on the chunk_size from ota_start_t. Create a buffer management system for receiving and storing chunks on the secondary board. Ensure proper handling of chunk_index for out-of-order reception.",
+          "status": "pending",
+          "testStrategy": "Test with various firmware sizes and chunk sizes. Verify correct chunking and reassembly. Simulate out-of-order and lost chunks to ensure robustness."
+        },
+        {
+          "id": 3,
+          "title": "Implement Progress Tracking and Error Handling",
+          "description": "Add a system to track OTA progress and handle various error conditions during the update process.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Develop a progress tracking mechanism based on received chunks vs. total_size. Implement timeout handling for incomplete transfers. Create an error reporting system for issues like CRC mismatch, invalid chunk size, or connection loss.",
+          "status": "pending",
+          "testStrategy": "Simulate various error conditions and verify proper handling and reporting. Test progress calculation accuracy with different firmware sizes."
+        },
+        {
+          "id": 4,
+          "title": "Develop Firmware Verification System",
+          "description": "Implement a mechanism to verify the integrity and version of the transferred firmware before applying the update.",
+          "dependencies": [
+            2,
+            3
+          ],
+          "details": "Use the provided CRC32 in ota_end_t to verify the complete firmware image. Implement version checking to prevent downgrade attacks. Create a secure storage mechanism for the current firmware version on the secondary board.",
+          "status": "pending",
+          "testStrategy": "Test with corrupted firmware images to ensure detection. Verify version comparison logic. Attempt to 'downgrade' firmware and ensure it's prevented."
+        },
+        {
+          "id": 5,
+          "title": "Implement Update Application and Reboot Sequence",
+          "description": "Develop the final stage of the OTA process to apply the update and coordinate the reboot sequence between primary and secondary boards.",
+          "dependencies": [
+            3,
+            4
+          ],
+          "details": "Create a function to apply the verified firmware update on the secondary board. Implement a coordinated reboot sequence ensuring both boards are in sync. Develop a rollback mechanism in case of boot failure after update.",
+          "status": "pending",
+          "testStrategy": "Perform end-to-end tests of the entire OTA process. Simulate various failure scenarios during reboot and verify rollback functionality. Test with multiple successive updates to ensure stability."
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "HID State Management and Synchronization",
+      "description": "Implement state management for HID devices to ensure proper synchronization when switching between hosts.",
+      "status": "pending",
+      "dependencies": [
+        2,
+        3,
+        6
+      ],
+      "priority": "high",
+      "details": "1. Create data structures to track complete HID state (pressed keys, mouse buttons, etc.)\n2. Implement state update functions for USB input events\n3. Create state flush mechanism for host switching\n4. Ensure all keys/buttons are released when switching hosts\n5. Implement state synchronization between boards via neighbor module\n6. Handle edge cases like stuck keys\n\nHID state tracking:\n```c\ntypedef struct {\n    uint8_t keyboard_report[8];  // Standard HID keyboard report\n    uint8_t key_states[256/8];   // Bitmap of pressed keys\n    uint8_t mouse_buttons;       // Mouse button state\n    int16_t mouse_x;             // Relative mouse X movement\n    int16_t mouse_y;             // Relative mouse Y movement\n} hid_state_t;\n\nvoid hid_state_update_key(uint8_t key, bool pressed);\nvoid hid_state_update_mouse(uint8_t buttons, int16_t x, int16_t y);\nvoid hid_state_flush(void);\nbool hid_state_generate_reports(uint8_t *kb_report, uint8_t *mouse_report);\n```",
+      "testStrategy": "Test state tracking with various input combinations. Verify all keys/buttons are properly released when switching hosts. Test edge cases like rapid key presses during host switching. Validate state synchronization between boards.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement State Update Functions",
+          "description": "Create functions to update the HID state based on USB input events",
+          "dependencies": [],
+          "details": "Implement hid_state_update_key() and hid_state_update_mouse() functions to modify the hid_state_t structure. Ensure proper handling of key presses/releases and mouse movements/clicks.",
+          "status": "pending",
+          "testStrategy": "Unit test each function with various input scenarios, including edge cases like multiple simultaneous key presses."
+        },
+        {
+          "id": 2,
+          "title": "Develop State Flush Mechanism",
+          "description": "Implement a mechanism to clear the HID state when switching hosts",
+          "dependencies": [
+            1
+          ],
+          "details": "Create hid_state_flush() function to reset all fields in hid_state_t to their default values. Ensure all keys and buttons are marked as released.",
+          "status": "pending",
+          "testStrategy": "Verify that after calling hid_state_flush(), all state variables are reset to their initial values."
+        },
+        {
+          "id": 3,
+          "title": "Generate HID Reports",
+          "description": "Implement a function to generate standard HID reports from the current state",
+          "dependencies": [
+            1
+          ],
+          "details": "Develop hid_state_generate_reports() to create keyboard and mouse HID reports based on the current hid_state_t. Handle conversion between internal state representation and standard HID reports.",
+          "status": "pending",
+          "testStrategy": "Test with various state configurations and verify that the generated reports match the expected HID report format."
+        },
+        {
+          "id": 4,
+          "title": "Implement Inter-Board State Synchronization",
+          "description": "Create a protocol for synchronizing HID state between boards using the neighbor module",
+          "dependencies": [
+            1,
+            2,
+            3
+          ],
+          "details": "Design and implement a communication protocol to share hid_state_t between boards. Use the UART frame types INPUT_KEY and INPUT_MOUSE to transmit state changes to the neighbor board.",
+          "status": "pending",
+          "testStrategy": "Set up a test environment with both boards and verify that state changes on one board are correctly reflected on the other."
+        },
+        {
+          "id": 5,
+          "title": "Handle Edge Cases and Error Conditions",
+          "description": "Implement robust error handling and manage edge cases like stuck keys",
+          "dependencies": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "details": "Add timeout mechanisms for key presses to prevent stuck keys. Implement error checking in all functions and handle potential issues like buffer overflows or communication errors between boards.",
+          "status": "pending",
+          "testStrategy": "Conduct stress tests with rapid state changes and intentionally introduce error conditions to verify proper handling and recovery."
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "BLE Bonding and Persistent Identity Management",
+      "description": "Implement persistent BLE identity and bonding information storage to ensure consistent device recognition across reboots, with support for multiple simultaneous connections.",
+      "status": "pending",
+      "dependencies": [
+        3
+      ],
+      "priority": "medium",
+      "details": "1. Configure static MAC address for each board\n2. Implement NVS storage for BLE bonding keys\n3. Create functions to store/retrieve bonding information for multiple connections\n4. Set fixed device name based on board identity\n5. Implement bond management (list, delete, etc.)\n6. Ensure bonding persists across firmware updates\n\nBLE identity management:\n```c\nbool ble_load_bonding_info(void);\nbool ble_save_bonding_info(void);\nbool ble_delete_bonding(esp_bd_addr_t addr);\nbool ble_list_bonded_devices(void);\nvoid ble_set_static_identity(void);\n```\n\nNVS structure:\n```\nble_bonds/     # Namespace for BLE bonding\n  count        # Number of bonded devices\n  dev_0        # Bonding data for device 0\n  dev_1        # Bonding data for device 1\n  ...\n```",
+      "testStrategy": "Test BLE pairing with multiple host devices simultaneously. Verify bonding information persists across reboots and firmware updates. Test bond management functions. Validate that the BLE identity remains consistent.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Static MAC Address Configuration",
+          "description": "Create a function to set and store a static MAC address for each board based on its compile-time role.",
+          "dependencies": [],
+          "details": "Implement ble_set_static_identity() function to assign and store a unique, static MAC address based on the BOARD_ROLE constant. Use NVS to persist this information.",
+          "status": "pending",
+          "testStrategy": "Verify that each board consistently uses the same MAC address across reboots and firmware updates."
+        },
+        {
+          "id": 2,
+          "title": "Develop NVS Storage for BLE Bonding Keys",
+          "description": "Implement functions to save and load BLE bonding information using NVS storage.",
+          "dependencies": [
+            1
+          ],
+          "details": "Create ble_save_bonding_info() and ble_load_bonding_info() functions to store and retrieve bonding keys in the 'ble_bonds' namespace. Use the NVS structure as specified in the task description.",
+          "status": "pending",
+          "testStrategy": "Test saving and loading bonding information, ensuring data integrity and persistence across reboots."
+        },
+        {
+          "id": 3,
+          "title": "Implement Bond Management Functions",
+          "description": "Create functions to list bonded devices and delete specific bonds.",
+          "dependencies": [
+            2
+          ],
+          "details": "Implement ble_list_bonded_devices() to enumerate all bonded devices and ble_delete_bonding() to remove a specific bond. Update the 'count' value in NVS when adding or removing bonds.",
+          "status": "pending",
+          "testStrategy": "Test listing bonded devices and deleting specific bonds, verifying that the NVS storage is updated correctly."
+        },
+        {
+          "id": 4,
+          "title": "Implement Multiple Connection Support",
+          "description": "Extend the bonding system to support multiple simultaneous BLE connections.",
+          "dependencies": [
+            2,
+            3
+          ],
+          "details": "Modify the bonding system to track and manage multiple simultaneous connections. Update the NVS structure to store connection-specific information for each bonded device.",
+          "status": "pending",
+          "testStrategy": "Test connecting to multiple hosts simultaneously and verify that bonding information is correctly maintained for each connection."
+        },
+        {
+          "id": 5,
+          "title": "Ensure Bonding Persistence Across Firmware Updates",
+          "description": "Implement mechanisms to preserve bonding information during and after firmware updates.",
+          "dependencies": [
+            2,
+            3,
+            4
+          ],
+          "details": "Develop a system to backup and restore bonding information before and after firmware updates. This may involve creating a separate NVS partition for bonding data that remains untouched during updates.",
+          "status": "pending",
+          "testStrategy": "Perform firmware updates and verify that all bonding information and device identities are preserved and functional after the update process."
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Error Handling and Logging System",
+      "description": "Implement comprehensive error handling and logging system to facilitate debugging and ensure system robustness.",
+      "status": "pending",
+      "dependencies": [
+        1
+      ],
+      "priority": "medium",
+      "details": "1. Define error codes for all subsystems\n2. Implement structured logging with severity levels\n3. Create circular buffer for recent log messages\n4. Implement watchdog for system health monitoring\n5. Create error recovery mechanisms for critical failures\n\nLogging system:\n```c\ntypedef enum {\n    LOG_LEVEL_ERROR,\n    LOG_LEVEL_WARN,\n    LOG_LEVEL_INFO,\n    LOG_LEVEL_DEBUG,\n    LOG_LEVEL_VERBOSE\n} log_level_t;\n\nvoid log_init(void);\nvoid log_message(log_level_t level, const char *tag, const char *format, ...);\nbool log_get_recent(char *buffer, size_t max_len);\nvoid log_set_level(log_level_t level);\n```\n\nError handling:\n```c\ntypedef enum {\n    ERR_NONE = 0,\n    ERR_USB_INIT_FAILED,\n    ERR_BLE_INIT_FAILED,\n    ERR_UART_INIT_FAILED,\n    // etc.\n} error_code_t;\n\nvoid error_handler(error_code_t code, const char *details);\nbool system_health_check(void);\n```",
+      "testStrategy": "Test logging system with various message types and severity levels. Verify error handling for different failure scenarios. Test watchdog functionality by simulating system hangs.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Enhance Error Code Definition and Handling",
+          "description": "Expand the error code enumeration and improve the error handling mechanism",
+          "dependencies": [],
+          "details": "Add more specific error codes to the error_code_t enum. Implement a more robust error_handler function that logs errors, notifies appropriate subsystems, and initiates recovery procedures when possible.",
+          "status": "pending",
+          "testStrategy": "Create unit tests for each new error code and verify proper handling in various scenarios"
+        },
+        {
+          "id": 2,
+          "title": "Implement Advanced Logging Features",
+          "description": "Enhance the logging system with additional features and optimizations",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement log rotation to manage memory usage, add support for different output formats, and create a mechanism for dynamic log level adjustment at runtime.",
+          "status": "pending",
+          "testStrategy": "Develop integration tests to verify log rotation, format consistency, and dynamic log level changes"
+        },
+        {
+          "id": 3,
+          "title": "Develop Serial Console for Log Retrieval",
+          "description": "Create a simple serial console interface for accessing log data",
+          "dependencies": [
+            2
+          ],
+          "details": "Implement a basic serial console that allows viewing logs and changing log levels through a serial terminal. Include commands for filtering logs by level and tags.",
+          "status": "pending",
+          "testStrategy": "Test the serial console interface and verify correct log retrieval under various filter conditions"
+        },
+        {
+          "id": 4,
+          "title": "Implement System Health Monitoring",
+          "description": "Develop a comprehensive system health check mechanism",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Expand the system_health_check function to monitor CPU usage, memory consumption, and critical service statuses. Implement periodic health checks and alert mechanisms for critical issues.",
+          "status": "pending",
+          "testStrategy": "Simulate various system stress conditions and verify accurate health reporting and alerting"
+        },
+        {
+          "id": 5,
+          "title": "Create Automated Error Recovery Procedures",
+          "description": "Implement automatic error recovery mechanisms for critical system components",
+          "dependencies": [
+            1,
+            4
+          ],
+          "details": "Develop a set of recovery procedures for critical errors, such as service restarts, system resets, or failover mechanisms. Integrate these with the error handling system to enable automatic recovery attempts before escalating to manual intervention.",
+          "status": "pending",
+          "testStrategy": "Conduct fault injection testing to verify automatic recovery procedures for various critical error scenarios"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Neighbor Module Implementation",
+      "description": "Implement the neighbor module for serial communication between boards with active/standby states, HID report mirroring, and heartbeat mechanism.",
+      "status": "done",
+      "dependencies": [
+        4,
+        5,
+        6
+      ],
+      "priority": "high",
+      "details": "1. Create neighbor module for inter-board communication\n2. Implement active/standby state management\n3. Develop HID report mirroring between boards\n4. Implement heartbeat mechanism for neighbor detection\n5. Add neighbor state cleanup when heartbeat stops\n\nNeighbor module interface:\n```c\ntypedef enum {\n    NEIGHBOR_STATE_DISCONNECTED,\n    NEIGHBOR_STATE_CONNECTED,\n    NEIGHBOR_STATE_ACTIVE,\n    NEIGHBOR_STATE_STANDBY\n} neighbor_state_t;\n\nbool neighbor_init(void);\nvoid neighbor_send_heartbeat(void);\nbool neighbor_is_connected(void);\nneighbor_state_t neighbor_get_state(void);\nvoid neighbor_set_state(neighbor_state_t state);\nbool neighbor_send_hid_report(uint8_t report_type, const uint8_t *data, size_t len);\nvoid neighbor_process_frame(const uart_frame_t *frame);\n```",
+      "testStrategy": "Test neighbor detection and state management. Verify HID report mirroring between boards. Test heartbeat mechanism and timeout handling. Validate state cleanup when connection is lost.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Neighbor Module Core Functions",
+          "description": "Create the core functions for the neighbor module including initialization and state management.",
+          "dependencies": [],
+          "details": "Implement neighbor_init(), neighbor_get_state(), and neighbor_set_state() functions. Set up the state machine for tracking neighbor connection status.",
+          "status": "done",
+          "testStrategy": "Test initialization and state transitions. Verify that state changes are handled correctly."
+        },
+        {
+          "id": 3,
+          "title": "Implement HID Report Mirroring",
+          "description": "Create functions to send and receive HID reports between boards.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement neighbor_send_hid_report() function to transmit HID reports to the neighbor board. Create handlers for receiving and processing HID reports from the neighbor.",
+          "status": "done",
+          "testStrategy": "Test sending and receiving various HID reports between boards. Verify that reports are correctly mirrored."
+        },
+        {
+          "id": 4,
+          "title": "Develop Frame Processing Logic",
+          "description": "Implement the logic to process incoming UART frames from the neighbor.",
+          "dependencies": [
+            1,
+            3
+          ],
+          "details": "Create neighbor_process_frame() function to handle different frame types (BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT). Implement appropriate actions for each frame type.",
+          "status": "done",
+          "testStrategy": "Test processing of each frame type. Verify that the correct actions are taken for each type of frame."
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "System Integration and Final Testing",
+      "description": "Integrate all components, perform system-level testing, and prepare for deployment.",
+      "status": "pending",
+      "dependencies": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        11,
+        12,
+        13,
+        14
+      ],
+      "priority": "high",
+      "details": "1. Integrate all subsystems into a cohesive firmware\n2. Implement main application loop\n3. Add startup sequence with proper initialization order\n4. Create system diagnostics\n5. Perform power management optimization\n6. Add factory reset capability\n7. Create user documentation\n8. Prepare release package\n\nMain application:\n```c\nvoid app_main(void)\n{\n    // Initialize system components in proper order\n    log_init();\n    \n    // Configure based on compile-time role\n    configure_for_role();\n    \n    // Initialize hardware\n    uart_init();\n    usb_host_init();\n    ble_init();\n    neighbor_init();\n    \n    // Start system tasks\n    xTaskCreate(usb_host_task, \"usb_host\", 4096, NULL, 5, NULL);\n    xTaskCreate(ble_task, \"ble\", 4096, NULL, 5, NULL);\n    xTaskCreate(uart_task, \"uart\", 4096, NULL, 5, NULL);\n    xTaskCreate(neighbor_task, \"neighbor\", 4096, NULL, 5, NULL);\n    \n    // Main loop for system monitoring\n    while (1) {\n        system_health_check();\n        vTaskDelay(pdMS_TO_TICKS(1000));\n    }\n}\n```",
+      "testStrategy": "Perform end-to-end testing with real hardware. Test all features in combination. Verify system stability over extended periods. Test recovery from various failure scenarios. Validate user experience matches requirements.",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement System Diagnostics",
+          "description": "Create a comprehensive system diagnostics module to monitor and report on the health of all integrated components.",
+          "dependencies": [],
+          "details": "Develop a diagnostics module that checks the status of UART, USB, BLE, and other hardware components. Implement error logging and reporting mechanisms. Integrate this into the system_health_check() function in the main loop.",
+          "status": "pending",
+          "testStrategy": "Create unit tests for each diagnostic check. Simulate various error conditions to ensure proper detection and reporting."
+        },
+        {
+          "id": 2,
+          "title": "Optimize Power Management",
+          "description": "Implement power management strategies to optimize battery life and system performance.",
+          "dependencies": [
+            1
+          ],
+          "details": "Analyze power consumption of each component. Implement sleep modes for idle periods. Optimize the main loop to reduce unnecessary wake-ups. Consider using ESP-IDF's power management APIs for fine-grained control.",
+          "status": "pending",
+          "testStrategy": "Measure power consumption in various operational modes. Verify that sleep modes are entered and exited correctly without affecting system functionality."
+        },
+        {
+          "id": 3,
+          "title": "Implement Factory Reset Capability",
+          "description": "Add a feature to reset the system to its original factory settings, clearing all user data and configurations.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Implement a factory reset function that clears NVS storage, resets configurations to default, and reinitializes all components. Add a trigger mechanism (e.g., button press or command) to initiate the reset process.",
+          "status": "pending",
+          "testStrategy": "Test the factory reset process thoroughly, ensuring all user data is cleared and the system returns to its initial state. Verify that the system remains stable after multiple reset cycles."
+        },
+        {
+          "id": 4,
+          "title": "Create User Documentation",
+          "description": "Develop comprehensive user documentation covering system operation, features, and troubleshooting.",
+          "dependencies": [
+            1,
+            2,
+            3
+          ],
+          "details": "Write clear instructions for system setup, operation, and maintenance. Include sections on diagnostics, power management, and factory reset. Document all user-facing features and interfaces. Create troubleshooting guides and FAQs.",
+          "status": "pending",
+          "testStrategy": "Conduct user testing with the documentation to ensure clarity and completeness. Have non-technical users attempt to follow the instructions and provide feedback."
+        },
+        {
+          "id": 5,
+          "title": "Prepare Release Package",
+          "description": "Compile all necessary components into a release package ready for deployment.",
+          "dependencies": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "details": "Package the final firmware binary for both board roles, user documentation, and any necessary tools or drivers. Create a release notes document detailing changes, known issues, and upgrade instructions. Prepare a deployment checklist for quality assurance.",
+          "status": "pending",
+          "testStrategy": "Perform a complete system test using the release package. Verify that all components are included and function correctly when deployed to a clean system."
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "BLE Output Reports for Keyboard LED Control",
+      "description": "Implement support for BLE output reports to allow host operating systems to control keyboard LEDs (CapsLock, NumLock, ScrollLock) and synchronize LED states between the BLE host and physical USB keyboard.",
+      "status": "pending",
+      "dependencies": [
+        2,
+        3,
+        11,
+        14
+      ],
+      "priority": "medium",
+      "details": "1. Extend the BLE HID Device Profile to handle incoming output reports from the host:\n   - Implement a callback function to process HID output reports received over BLE\n   - Parse the LED state information from the output reports (typically bit flags for CapsLock, NumLock, ScrollLock)\n   - Store the current LED state in a global variable for reference\n   - Advertise support for BLE HID output reports specifically for keyboard LEDs in the HID descriptor\n\n2. Create a mechanism to forward LED state changes to the USB keyboard:\n   - Implement a function to send USB HID output reports to the connected keyboard\n   - Ensure the USB HID output report format matches the keyboard's expectations\n   - Handle potential errors or disconnected devices gracefully\n\n3. Implement host-specific LED state caching:\n   - Maintain separate LED state caches for each connected BLE host\n   - When a BLE output report is received, update the cache for the specific host\n   - Only forward LED state changes from the currently active host to the USB keyboard\n   - Add debouncing or rate limiting if necessary to prevent excessive USB traffic\n\n4. Implement host switching LED synchronization:\n   - When switching between hosts, retrieve the cached LED state for the new active host\n   - Forward this cached state to the USB keyboard immediately after host switching\n   - Ensure only the active host's LED state affects the physical keyboard to prevent conflicts\n\n5. Add support for the neighbor module:\n   - Extend the neighbor protocol to include LED state synchronization\n   - When LED state changes from the active host, notify the neighbor board if it's in standby mode\n   - Implement message handlers for LED state updates from the neighbor\n\n6. Update the HID state management system:\n   - Integrate LED state into the overall HID state tracking\n   - Ensure LED states are properly maintained during host switching\n   - Handle edge cases like disconnected keyboards or BLE connections\n\nExample code for BLE output report callback:\n```c\nstatic void ble_hid_output_report_cb(uint8_t report_id, uint8_t *data, size_t len, uint8_t host_id) {\n    if (report_id == KEYBOARD_LED_REPORT_ID) {\n        // Extract LED state from data\n        uint8_t led_state = data[0];\n        \n        // Update host-specific LED state cache\n        g_keyboard_led_states[host_id] = led_state;\n        \n        // Only forward to USB keyboard if this is the active host\n        if (get_active_host_id() == host_id) {\n            usb_host_send_keyboard_led_report(led_state);\n            \n            // Notify neighbor if in standby mode\n            if (neighbor_get_state() == NEIGHBOR_STATE_STANDBY) {\n                neighbor_send_led_state(led_state);\n            }\n        }\n        \n        ESP_LOGI(TAG, \"BLE LED state updated for host %d: CAPS:%d NUM:%d SCROLL:%d\", \n                 host_id,\n                 (led_state & KEYBOARD_LED_CAPSLOCK) ? 1 : 0,\n                 (led_state & KEYBOARD_LED_NUMLOCK) ? 1 : 0,\n                 (led_state & KEYBOARD_LED_SCROLLLOCK) ? 1 : 0);\n    }\n}\n```\n\nExample code for USB keyboard LED control:\n```c\nbool usb_host_send_keyboard_led_report(uint8_t led_state) {\n    if (!usb_host_is_keyboard_connected()) {\n        ESP_LOGW(TAG, \"Cannot send LED report: No keyboard connected\");\n        return false;\n    }\n    \n    uint8_t report[1] = { led_state };\n    esp_err_t err = usb_host_send_control_transfer(\n        USB_HID_SET_REPORT,\n        USB_HID_REPORT_TYPE_OUTPUT,\n        KEYBOARD_LED_REPORT_ID,\n        report,\n        sizeof(report)\n    );\n    \n    if (err != ESP_OK) {\n        ESP_LOGE(TAG, \"Failed to send LED report to USB keyboard: %s\", esp_err_to_name(err));\n        return false;\n    }\n    \n    return true;\n}\n```\n\nExample code for host switching LED synchronization:\n```c\nvoid sync_led_state_on_host_switch(uint8_t new_host_id) {\n    // Get cached LED state for the new active host\n    uint8_t led_state = g_keyboard_led_states[new_host_id];\n    \n    // Forward to USB keyboard\n    usb_host_send_keyboard_led_report(led_state);\n    \n    ESP_LOGI(TAG, \"Synced LED state after host switch to host %d: CAPS:%d NUM:%d SCROLL:%d\",\n             new_host_id,\n             (led_state & KEYBOARD_LED_CAPSLOCK) ? 1 : 0,\n             (led_state & KEYBOARD_LED_NUMLOCK) ? 1 : 0,\n             (led_state & KEYBOARD_LED_SCROLLLOCK) ? 1 : 0);\n}\n```\n\n7. Update the neighbor module protocol to include LED state messages:\n```c\n// Add to neighbor message types\ntypedef enum {\n    // Existing message types...\n    NEIGHBOR_MSG_LED_STATE,\n    // Other message types...\n} neighbor_msg_type_t;\n\n// LED state message structure\ntypedef struct {\n    uint8_t led_state;  // Bit flags for keyboard LEDs\n} neighbor_led_state_msg_t;\n```",
+      "testStrategy": "1. Unit Testing:\n   - Create unit tests for the BLE output report handling function\n   - Test with various LED state combinations (all on, all off, individual LEDs)\n   - Verify that the host-specific LED state caches are correctly updated\n   - Mock the USB output function to verify it's only called for the active host\n   - Test the host switching LED synchronization function\n\n2. Integration Testing:\n   - Connect multiple BLE hosts to the device\n   - Toggle CapsLock, NumLock, and ScrollLock on each host\n   - Verify that the device correctly caches LED states for each host separately\n   - Switch between hosts and confirm that the USB keyboard's LEDs change to match the new active host\n   - Verify that LED changes on inactive hosts don't affect the USB keyboard\n\n3. Edge Case Testing:\n   - Test behavior when USB keyboard is disconnected\n   - Test behavior when BLE connection is lost during LED state change\n   - Test rapid toggling of keyboard LEDs to ensure stability\n   - Verify proper LED synchronization after reconnection events\n   - Test behavior when switching to a host with no cached LED state\n\n4. Neighbor Module Testing:\n   - Set up primary and secondary boards\n   - Connect BLE host to primary board and toggle keyboard LEDs\n   - Verify that LED states are properly synchronized to secondary board\n   - Test in both active and standby modes\n   - Verify LED states are maintained during board role switching\n   - Confirm that only the active host's LED state is forwarded to the neighbor\n\n5. System Testing:\n   - Test the complete system with all components\n   - Verify LED states are correctly maintained during host switching\n   - Test with different keyboard models to ensure compatibility\n   - Verify LED states persist correctly across system reboots\n   - Confirm that host-specific LED states are preserved when reconnecting to previously paired hosts\n\n6. Performance Testing:\n   - Measure latency between BLE output report reception and USB LED update\n   - Ensure LED state changes don't impact other system functions\n   - Test under high system load to verify reliable operation\n   - Measure the time taken to synchronize LED states during host switching",
+      "subtasks": []
+    }
+  ]
+}

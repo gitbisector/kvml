@@ -1,0 +1,66 @@
+# Task ID: 12
+# Title: BLE Bonding and Persistent Identity Management
+# Status: pending
+# Dependencies: 3
+# Priority: medium
+# Description: Implement persistent BLE identity and bonding information storage to ensure consistent device recognition across reboots, with support for multiple simultaneous connections.
+# Details:
+1. Configure static MAC address for each board
+2. Implement NVS storage for BLE bonding keys
+3. Create functions to store/retrieve bonding information for multiple connections
+4. Set fixed device name based on board identity
+5. Implement bond management (list, delete, etc.)
+6. Ensure bonding persists across firmware updates
+
+BLE identity management:
+```c
+bool ble_load_bonding_info(void);
+bool ble_save_bonding_info(void);
+bool ble_delete_bonding(esp_bd_addr_t addr);
+bool ble_list_bonded_devices(void);
+void ble_set_static_identity(void);
+```
+
+NVS structure:
+```
+ble_bonds/     # Namespace for BLE bonding
+  count        # Number of bonded devices
+  dev_0        # Bonding data for device 0
+  dev_1        # Bonding data for device 1
+  ...
+```
+
+# Test Strategy:
+Test BLE pairing with multiple host devices simultaneously. Verify bonding information persists across reboots and firmware updates. Test bond management functions. Validate that the BLE identity remains consistent.
+
+# Subtasks:
+## 1. Implement Static MAC Address Configuration [pending]
+### Dependencies: None
+### Description: Create a function to set and store a static MAC address for each board based on its compile-time role.
+### Details:
+Implement ble_set_static_identity() function to assign and store a unique, static MAC address based on the BOARD_ROLE constant. Use NVS to persist this information.
+
+## 2. Develop NVS Storage for BLE Bonding Keys [pending]
+### Dependencies: 12.1
+### Description: Implement functions to save and load BLE bonding information using NVS storage.
+### Details:
+Create ble_save_bonding_info() and ble_load_bonding_info() functions to store and retrieve bonding keys in the 'ble_bonds' namespace. Use the NVS structure as specified in the task description.
+
+## 3. Implement Bond Management Functions [pending]
+### Dependencies: 12.2
+### Description: Create functions to list bonded devices and delete specific bonds.
+### Details:
+Implement ble_list_bonded_devices() to enumerate all bonded devices and ble_delete_bonding() to remove a specific bond. Update the 'count' value in NVS when adding or removing bonds.
+
+## 4. Implement Multiple Connection Support [pending]
+### Dependencies: 12.2, 12.3
+### Description: Extend the bonding system to support multiple simultaneous BLE connections.
+### Details:
+Modify the bonding system to track and manage multiple simultaneous connections. Update the NVS structure to store connection-specific information for each bonded device.
+
+## 5. Ensure Bonding Persistence Across Firmware Updates [pending]
+### Dependencies: 12.2, 12.3, 12.4
+### Description: Implement mechanisms to preserve bonding information during and after firmware updates.
+### Details:
+Develop a system to backup and restore bonding information before and after firmware updates. This may involve creating a separate NVS partition for bonding data that remains untouched during updates.
+

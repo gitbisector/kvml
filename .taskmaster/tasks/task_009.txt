@@ -1,0 +1,66 @@
+# Task ID: 9
+# Title: OTA Update System for Primary Board
+# Status: deferred
+# Dependencies: 7, 8
+# Priority: low
+# Description: Implement OTA (Over-The-Air) firmware update capability for the primary board via the web interface.
+# Details:
+1. Implement HTTP-based OTA update handler
+2. Add firmware validation (signature, CRC, etc.)
+3. Create update state machine with proper error handling
+4. Implement rollback capability for failed updates
+5. Add progress reporting to web interface
+6. Ensure atomic update process
+
+OTA process:
+```c
+typedef enum {
+    OTA_STATE_IDLE,
+    OTA_STATE_START,
+    OTA_STATE_IN_PROGRESS,
+    OTA_STATE_VERIFYING,
+    OTA_STATE_REBOOTING,
+    OTA_STATE_ERROR
+} ota_state_t;
+
+bool ota_begin(void);
+bool ota_write(const uint8_t *data, size_t len);
+bool ota_end(bool validate);
+void ota_abort(void);
+float ota_get_progress(void);
+```
+
+# Test Strategy:
+Test OTA update with valid and invalid firmware images. Verify rollback functionality works when updates fail. Test interrupted updates to ensure system remains bootable. Validate progress reporting accuracy.
+
+# Subtasks:
+## 1. Implement HTTP-based OTA update handler [pending]
+### Dependencies: None
+### Description: Create an HTTP endpoint to receive firmware updates and initiate the OTA process
+### Details:
+Use ESP-IDF's HTTP server library to create a POST endpoint for firmware uploads. Implement request parsing and validation.
+
+## 2. Implement firmware validation [pending]
+### Dependencies: 9.1
+### Description: Add signature verification and CRC checks for uploaded firmware
+### Details:
+Use cryptographic libraries to verify firmware signatures. Implement CRC32 calculation for integrity checks.
+
+## 3. Create OTA state machine [pending]
+### Dependencies: 9.1, 9.2
+### Description: Implement the OTA state machine with proper error handling and progress tracking
+### Details:
+Use the provided ota_state_t enum and implement state transitions. Integrate with ota_begin(), ota_write(), ota_end(), and ota_abort() functions.
+
+## 4. Implement rollback capability [pending]
+### Dependencies: 9.3
+### Description: Add functionality to revert to the previous firmware version if an update fails
+### Details:
+Implement a dual-partition scheme for firmware storage. Add logic to switch between partitions on boot if an update fails.
+
+## 5. Integrate OTA progress reporting with web interface [pending]
+### Dependencies: 9.3
+### Description: Add real-time progress updates to the web interface during OTA updates
+### Details:
+Implement a WebSocket connection to send progress updates. Use ota_get_progress() function to retrieve current progress.
+

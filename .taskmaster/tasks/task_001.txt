@@ -1,0 +1,20 @@
+# Task ID: 1
+# Title: Project Setup and ESP-IDF Configuration
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Initialize the project repository with ESP-IDF framework, configure the build system, and set up the partition table as specified in the PRD.
+# Details:
+1. Create a new ESP-IDF project using the latest stable version
+2. Configure CMakeLists.txt for dual ESP32-S3 target
+3. Implement the partition table as specified in PRD:
+   - nvs: 24KB for BLE bonding keys and config
+   - ota_0: 1.5MB for firmware slot 1
+   - ota_1: 1.5MB for firmware slot 2
+   - spiffs: 512KB for Web UI and config files
+4. Set up project structure with common code and board-specific modules
+5. Configure logging levels and debug output
+6. Initialize git repository with appropriate .gitignore
+
+# Test Strategy:
+Verify build system works for both ESP32-S3 boards. Test flash operations to ensure partition table is correctly applied. Validate that both boards can be programmed with the same firmware binary.

@@ -1,0 +1,71 @@
+# Task ID: 8
+# Title: SPIFFS and Configuration Management
+# Status: deferred
+# Dependencies: 1, 7
+# Priority: low
+# Description: Implement SPIFFS filesystem for storing web UI assets, system configuration, and board roles, with functions to load/save settings.
+# Details:
+1. Initialize SPIFFS with the configured partition
+2. Create directory structure for web assets and configuration
+3. Implement functions to load/save configuration as JSON
+4. Add default configuration for first boot
+5. Implement configuration versioning for future compatibility
+6. Create backup/restore functionality
+7. Store board role configuration persistently
+
+Configuration management:
+```c
+bool config_init(void);
+bool config_load(system_config_t *config);
+bool config_save(const system_config_t *config);
+void config_set_defaults(system_config_t *config);
+bool config_save_board_role(board_role_t role);
+board_role_t config_load_board_role(void);
+```
+
+File structure:
+```
+/spiffs
+  /web           # Web UI files
+    index.html
+    style.css
+    script.js
+  /config        # Configuration files
+    system.json  # System configuration
+    role.json    # Board role configuration
+```
+
+# Test Strategy:
+Test configuration load/save with various settings. Verify defaults are applied on first boot. Test configuration persistence across reboots and power cycles. Validate error handling for corrupted configuration files.
+
+# Subtasks:
+## 1. Initialize SPIFFS and Create Directory Structure [pending]
+### Dependencies: None
+### Description: Set up the SPIFFS filesystem and create the necessary directory structure for web assets and configuration files.
+### Details:
+Use esp_vfs_spiffs_register() to mount SPIFFS. Create /web and /config directories. Handle potential errors during initialization.
+
+## 2. Implement Configuration Management Functions [pending]
+### Dependencies: 8.1
+### Description: Develop functions for initializing, loading, saving, and setting default configurations.
+### Details:
+Implement config_init(), config_load(), config_save(), and config_set_defaults() functions as per the provided C function prototypes. Use cJSON library for JSON parsing and generation.
+
+## 3. Implement Board Role Configuration Functions [pending]
+### Dependencies: 8.1, 8.2
+### Description: Create functions to save and load board role configuration to/from SPIFFS.
+### Details:
+Implement config_save_board_role() and config_load_board_role() functions to store and retrieve the board role from SPIFFS. Include error handling and default role assignment.
+
+## 4. Add Version Control to Configuration [pending]
+### Dependencies: 8.2, 8.3
+### Description: Implement a versioning system for the configuration to ensure future compatibility.
+### Details:
+Add a version field to the system_config_t struct. Implement a function to update configuration structure when loading older versions. Store the current version in the JSON config file.
+
+## 5. Develop Backup and Restore Functionality [pending]
+### Dependencies: 8.2, 8.3, 8.4
+### Description: Create functions to backup the current configuration and restore from a backup.
+### Details:
+Implement backup_config() and restore_config() functions. Use separate files for backups (e.g., /config/backup.json, /config/role_backup.json). Include version information in backups.
+

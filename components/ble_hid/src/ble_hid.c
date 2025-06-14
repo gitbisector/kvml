@@ -12,8 +12,10 @@
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "esp_bt.h"
 
 static const char *TAG = "BLE_HID";
+static bool ble_hid_initialized = false;
 
 /**
  * The NimBLE host task.
@@ -37,7 +39,19 @@ static void ble_host_task(void *param)
 
 esp_err_t ble_hid_init(void)
 {
+    if (ble_hid_initialized) {
+        ESP_LOGW(TAG, "BLE HID already initialized");
+        return ESP_OK;
+    }
+    
     ESP_LOGI(TAG, "Initializing BLE HID component");
+
+    // Check if BT controller is already enabled
+    if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+        ESP_LOGI(TAG, "BT controller already enabled");
+    } else {
+        ESP_LOGI(TAG, "BT controller not enabled yet");
+    }
 
     // NimBLE GATT caching is disabled in menuconfig to avoid type conflicts
     ESP_LOGI(TAG, "Using NimBLE with GATT caching disabled");
@@ -45,20 +59,16 @@ esp_err_t ble_hid_init(void)
     // Initialize NimBLE controller
     ESP_LOGI(TAG, "Initializing NimBLE controller...");
     esp_err_t err = nimble_port_init();
-    if (err != ESP_OK) {
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "NimBLE controller already initialized, continuing...");
+        err = ESP_OK;
+    } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to init NimBLE port: %s", esp_err_to_name(err));
         return err;
     }
 
-    // Initialize NimBLE host stack in a separate task
-    ESP_LOGI(TAG, "Initializing NimBLE host stack...");
-    nimble_port_freertos_init(ble_host_task);
-
-    // Register essential BLE services
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-
-    // Initialize common HID device functionality
+    // Initialize common HID device functionality BEFORE starting NimBLE host
+    // This ensures sync callback is registered before the host starts
     ESP_LOGI(TAG, "Initializing common HID device functionality...");
     err = ble_hid_device_init();
     if (err != ESP_OK) {
@@ -66,17 +76,14 @@ esp_err_t ble_hid_init(void)
         return err;
     }
 
-    // Initialize the BLE HID mouse functionality
-    ESP_LOGI(TAG, "Initializing BLE HID Mouse...");
-    err = ble_hid_mouse_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to init BLE HID Mouse: %s", esp_err_to_name(err));
-        return err;
-    }
+    // Initialize NimBLE host stack in a separate task AFTER setting up callbacks
+    ESP_LOGI(TAG, "Initializing NimBLE host stack...");
+    nimble_port_freertos_init(ble_host_task);
 
-    // Start advertising
-    ble_hid_device_start_advertising();
+    // Note: BLE HID Mouse service registration will be done in the sync callback
+    // when the NimBLE stack is fully ready
 
+    ble_hid_initialized = true;
     ESP_LOGI(TAG, "BLE HID component initialized successfully");
     return ESP_OK;
 }

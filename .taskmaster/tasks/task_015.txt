@@ -1,0 +1,80 @@
+# Task ID: 15
+# Title: System Integration and Final Testing
+# Status: pending
+# Dependencies: 2, 3, 4, 5, 6, 11, 12, 13, 14
+# Priority: high
+# Description: Integrate all components, perform system-level testing, and prepare for deployment.
+# Details:
+1. Integrate all subsystems into a cohesive firmware
+2. Implement main application loop
+3. Add startup sequence with proper initialization order
+4. Create system diagnostics
+5. Perform power management optimization
+6. Add factory reset capability
+7. Create user documentation
+8. Prepare release package
+
+Main application:
+```c
+void app_main(void)
+{
+    // Initialize system components in proper order
+    log_init();
+    
+    // Configure based on compile-time role
+    configure_for_role();
+    
+    // Initialize hardware
+    uart_init();
+    usb_host_init();
+    ble_init();
+    neighbor_init();
+    
+    // Start system tasks
+    xTaskCreate(usb_host_task, "usb_host", 4096, NULL, 5, NULL);
+    xTaskCreate(ble_task, "ble", 4096, NULL, 5, NULL);
+    xTaskCreate(uart_task, "uart", 4096, NULL, 5, NULL);
+    xTaskCreate(neighbor_task, "neighbor", 4096, NULL, 5, NULL);
+    
+    // Main loop for system monitoring
+    while (1) {
+        system_health_check();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+```
+
+# Test Strategy:
+Perform end-to-end testing with real hardware. Test all features in combination. Verify system stability over extended periods. Test recovery from various failure scenarios. Validate user experience matches requirements.
+
+# Subtasks:
+## 1. Implement System Diagnostics [pending]
+### Dependencies: None
+### Description: Create a comprehensive system diagnostics module to monitor and report on the health of all integrated components.
+### Details:
+Develop a diagnostics module that checks the status of UART, USB, BLE, and other hardware components. Implement error logging and reporting mechanisms. Integrate this into the system_health_check() function in the main loop.
+
+## 2. Optimize Power Management [pending]
+### Dependencies: 15.1
+### Description: Implement power management strategies to optimize battery life and system performance.
+### Details:
+Analyze power consumption of each component. Implement sleep modes for idle periods. Optimize the main loop to reduce unnecessary wake-ups. Consider using ESP-IDF's power management APIs for fine-grained control.
+
+## 3. Implement Factory Reset Capability [pending]
+### Dependencies: 15.1, 15.2
+### Description: Add a feature to reset the system to its original factory settings, clearing all user data and configurations.
+### Details:
+Implement a factory reset function that clears NVS storage, resets configurations to default, and reinitializes all components. Add a trigger mechanism (e.g., button press or command) to initiate the reset process.
+
+## 4. Create User Documentation [pending]
+### Dependencies: 15.1, 15.2, 15.3
+### Description: Develop comprehensive user documentation covering system operation, features, and troubleshooting.
+### Details:
+Write clear instructions for system setup, operation, and maintenance. Include sections on diagnostics, power management, and factory reset. Document all user-facing features and interfaces. Create troubleshooting guides and FAQs.
+
+## 5. Prepare Release Package [pending]
+### Dependencies: 15.1, 15.2, 15.3, 15.4
+### Description: Compile all necessary components into a release package ready for deployment.
+### Details:
+Package the final firmware binary for both board roles, user documentation, and any necessary tools or drivers. Create a release notes document detailing changes, known issues, and upgrade instructions. Prepare a deployment checklist for quality assurance.
+

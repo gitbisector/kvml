@@ -4,21 +4,31 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
-#include "host/ble_gatt.h"
+#include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "ble_hid_device.h"
+#include "ble_hid_mouse.h"
 
 // Function prototypes
 static void _init_adv_normal(void);
 char *ble_addr_to_str(const ble_addr_t *addr, char *dst);
+static void generate_device_name_with_mac(char *name_buffer, size_t buffer_size);
 
 static const char *TAG = "BLE_HID_DEVICE";
 
-// Device state for tracking connections
-ble_hid_dev_state_t ble_hid_dev_state;
+// Device state for tracking connections (single connection per ESP32)
+ble_hid_dev_state_t ble_hid_dev_state = {
+    .connected = false,
+    .conn_handle = 0,
+    .adv_restart_timer = NULL,
+    .adv_retry_timer = NULL,
+    .adv_retry_count = 0,
+    .pairing_in_progress = false,
+};
 
 // Timer callback for delayed advertising restart
 static void adv_restart_timer_cb(void* arg)
@@ -137,18 +147,20 @@ int ble_hid_device_set_adv_data(void) {
     fields.name_is_complete = 1;
     ESP_LOGI(TAG, "ADV: name='%s' (len=%d, is_complete=%d)", name, fields.name_len, fields.name_is_complete);
 
-    /* Set appearance for HID Keyboard+Mouse - same as working keyboard example */
-    fields.appearance = 0x03C3;  /* HID combo keyboard/mouse appearance */
+    /* Set appearance for HID Keyboard+Mouse combo - Ubuntu should categorize as input device */
+    fields.appearance = 0x03C1;  /* HID keyboard appearance - more generic for combo devices */
     fields.appearance_is_present = 1;
-    ESP_LOGI(TAG, "ADV: appearance=0x%04x (HID combo), is_present=%d",
+    ESP_LOGI(TAG, "ADV: appearance=0x%04x (HID keyboard+mouse combo), is_present=%d",
              fields.appearance, fields.appearance_is_present);
-    /* Set the 16-bit service UUIDs - same as working example */
+    /* Set the 16-bit service UUIDs - include HID, Battery, and Device Info services */
     static const ble_uuid16_t hid_service_uuid = BLE_UUID16_INIT(BLE_SVC_HID_UUID16);
-    fields.uuids16 = (ble_uuid16_t[]){ hid_service_uuid };
-    fields.num_uuids16 = 1;
+    static const ble_uuid16_t battery_service_uuid = BLE_UUID16_INIT(BLE_SVC_BAS_UUID16);
+    static const ble_uuid16_t device_info_service_uuid = BLE_UUID16_INIT(BLE_SVC_DIS_UUID16);
+    fields.uuids16 = (ble_uuid16_t[]){ hid_service_uuid, battery_service_uuid, device_info_service_uuid };
+    fields.num_uuids16 = 3;
     fields.uuids16_is_complete = 1;
-    ESP_LOGI(TAG, "ADV: uuid16=0x%04x (HID), num=%d, is_complete=%d",
-             BLE_SVC_HID_UUID16, fields.num_uuids16, fields.uuids16_is_complete);
+    ESP_LOGI(TAG, "ADV: Services - HID=0x%04x, Battery=0x%04x, DevInfo=0x%04x, num=%d, is_complete=%d",
+             BLE_SVC_HID_UUID16, BLE_SVC_BAS_UUID16, BLE_SVC_DIS_UUID16, fields.num_uuids16, fields.uuids16_is_complete);
 
     /* Test the fields in a buffer first */
     uint8_t buf[50];
@@ -196,6 +208,22 @@ char *ble_addr_to_str(const ble_addr_t *addr, char *dst) {
     return dst;
 }
 
+// Generate device name with last two digits of MAC address
+static void generate_device_name_with_mac(char *name_buffer, size_t buffer_size) {
+    uint8_t addr_val[6] = {0};
+    int rc = ble_hs_id_copy_addr(BLE_OWN_ADDR_PUBLIC, addr_val, NULL);
+    
+    if (rc == 0) {
+        // Use last two digits (bytes) of MAC address with shorter format
+        snprintf(name_buffer, buffer_size, "KM%02X%02X", addr_val[1], addr_val[0]);
+    } else {
+        // Fallback to default name if MAC address is not available
+        snprintf(name_buffer, buffer_size, "KM00");
+    }
+    
+    ESP_LOGI(TAG, "Generated device name: %s", name_buffer);
+}
+
 // Advertisement normal initialization
 static void _init_adv_normal(void) {
     ESP_LOGI(TAG, "Initializing normal advertising delay");
@@ -205,7 +233,28 @@ static void _init_adv_normal(void) {
  * Handle completed pairing
  */
 void ble_hid_on_pairing_complete(struct ble_gap_event *event) {
-    ESP_LOGI(TAG, "Pairing complete, encryption enabled");
+    struct ble_gap_conn_desc desc;
+    int rc;
+
+    // Get connection descriptor to determine bonding state
+    rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
+    if (rc == 0) {
+        ESP_LOGI(TAG, "Pairing complete, encryption enabled, bonded=%d", desc.sec_state.bonded);
+
+        // Verify that the connection is properly bonded
+        if (desc.sec_state.bonded) {
+            ESP_LOGI(TAG, "Bond has been stored for persistent reconnection");
+
+            // Bonds are automatically persisted by NimBLE when properly initialized
+            // The ble_store_config_init() call in initialization ensures this works
+            ESP_LOGI(TAG, "Bond info is automatically persisted by NimBLE");
+        } else {
+            ESP_LOGW(TAG, "Connection is encrypted but not bonded - reconnection may require re-pairing");
+        }
+    } else {
+        ESP_LOGW(TAG, "Could not find connection info: %d", rc);
+    }
+
     ble_hid_dev_state.pairing_in_progress = false;
 }
 
@@ -350,15 +399,37 @@ static void ble_hid_on_sync(void) {
         return;
     }
 
-    // Get device address for logging
+    // Get device address for logging and device name generation
     uint8_t addr_val[6] = {0};
     rc = ble_hs_id_copy_addr(own_addr_type, addr_val, NULL);
     if (rc == 0) {
         ESP_LOGI(TAG, "Device Address: %02x:%02x:%02x:%02x:%02x:%02x",
                 addr_val[5], addr_val[4], addr_val[3], addr_val[2], addr_val[1], addr_val[0]);
+        
+        // Generate and set device name with MAC suffix
+        char device_name[32];
+        generate_device_name_with_mac(device_name, sizeof(device_name));
+        ble_svc_gap_device_name_set(device_name);
+        ESP_LOGI(TAG, "Device name set to: %s", device_name);
     }
 
-    // Start advertising after sync
+    // Initialize essential BLE services (GAP and GATT) after sync
+    ESP_LOGI(TAG, "Initializing GAP and GATT services...");
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+
+    // Initialize BLE HID Mouse services now that the NimBLE stack is ready
+    ESP_LOGI(TAG, "Initializing BLE HID Mouse services...");
+    esp_err_t err = ble_hid_mouse_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init BLE HID mouse: %s", esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "BLE HID Mouse services initialized successfully");
+
+    ESP_LOGI(TAG, "BLE host sync complete - starting advertising");
+
+    // Start advertising after sync and service registration
     ble_hid_device_start_advertising();
 }
 
@@ -440,7 +511,7 @@ static int ble_handle_security_event(struct ble_gap_event *event, void *arg) {
  * BLE GAP event handler for common HID device events
  */
 int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
-    ESP_LOGI(TAG, "BLE GAP event type: %d", event->type);
+    ESP_LOGD(TAG, "BLE GAP event type: %d", event->type);
 
     // Debug print GAP event details based on type with enhanced information
     switch (event->type) {
@@ -540,7 +611,7 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             break;
 
         default:
-            ESP_LOGI(TAG, "GAP event type %d (no detailed logging for this type)", event->type);
+            ESP_LOGD(TAG, "GAP event type %d (no detailed logging for this type)", event->type);
             break;
     }
 
@@ -555,19 +626,10 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
             if (event->connect.status == 0) {
-                // Connection established
-                // Store connection handle in first available slot
-                for (int i = 0; i < BLE_HID_MAX_CONN; i++) {
-                    if (!ble_hid_dev_state.connected[i]) {
-                        ble_hid_dev_state.connected[i] = true;
-                        ble_hid_dev_state.conn_handles[i] = event->connect.conn_handle;
-                        ble_hid_dev_state.active_connections++;
-                        ESP_LOGI(TAG, "Connection %d established (handle=%d)", i, event->connect.conn_handle);
-                        break;
-                    }
-                }
-
-                // Connection handle already stored in the array above
+                // Connection established (single connection architecture)
+                ble_hid_dev_state.connected = true;
+                ble_hid_dev_state.conn_handle = event->connect.conn_handle;
+                ESP_LOGI(TAG, "Connection established (handle=%d)", event->connect.conn_handle);
 
                 // Immediately initiate security procedure as the peripheral device
                 // This is critical for Ubuntu Bluez HID connections to start pairing
@@ -623,7 +685,6 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                 case 517:
                     strcpy(reason_name, "UBUNTU_BLUEZ_UNPAIR(517)"); break;
             }
-
             ESP_LOGI(TAG, "Disconnected: reason=0x%04x (%s), conn_handle=%d",
                      event->disconnect.reason, reason_name,
                      event->disconnect.conn.conn_handle);
@@ -632,15 +693,10 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             ESP_LOGW(TAG, "BLE stack state after disconnect: conn_active=%d, adv_active=%d, HS enabled=%d",
                     ble_gap_conn_active(), ble_gap_adv_active(), ble_hs_is_enabled());
 
-            // Reset connection data
-            for (int i = 0; i < BLE_HID_MAX_CONN; i++) {
-                if (ble_hid_dev_state.conn_handles[i] == event->disconnect.conn.conn_handle) {
-                    ble_hid_dev_state.connected[i] = false;
-                    ble_hid_dev_state.active_connections--;
-                    ESP_LOGI(TAG, "Connection %d terminated", i);
-                    break;
-                }
-            }
+            // Reset connection data (single connection architecture)
+            ble_hid_dev_state.connected = false;
+            ble_hid_dev_state.conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            ESP_LOGI(TAG, "Connection terminated");
 
             // Clear pairing state
             ble_hid_dev_state.pairing_in_progress = false;
@@ -649,28 +705,55 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             // This requires special handling to ensure clean reconnection
             if (event->disconnect.reason == 517) {
                 ESP_LOGW(TAG, "Ubuntu disconnect reason 517 detected - applying special handling");
-                ESP_LOGW(TAG, "Deleting any existing bonds to ensure clean re-pairing");
+                ESP_LOGW(TAG, "Applying targeted bond management for Ubuntu Bluez compatibility");
 
-                // Completely clear ALL bonds to address Ubuntu pairing issues
-                ESP_LOGI(TAG, "Deleting ALL bonds to fully reset pairing state");
-                ble_store_clear();
-                ESP_LOGI(TAG, "Bond store cleared completely");
+                // For Ubuntu Bluez disconnect reason 517, we need to handle it carefully
+                // We'll only delete the specific peer bond rather than clearing all bonds
+                // This helps maintain other device connections while fixing the problematic one
 
-                // Delete specific peer bond as well
+                ESP_LOGI(TAG, "Selectively deleting bond for the disconnected peer");
                 if (ble_store_util_delete_peer(&event->disconnect.conn.peer_id_addr) == 0) {
-                    ESP_LOGI(TAG, "Successfully deleted bond for specific peer");
+                    ESP_LOGI(TAG, "Successfully deleted bond for the disconnected peer");
+
+                    // Verify bond deletion success by checking if any bonds remain for this peer
+                    struct ble_store_key_sec key_sec;
+                    memset(&key_sec, 0, sizeof(key_sec));
+                    key_sec.peer_addr = event->disconnect.conn.peer_id_addr;
+
+                    struct ble_store_value_sec value_sec;
+                    int rc = ble_store_read_peer_sec(&key_sec, &value_sec);
+                    if (rc == 0) {
+                        ESP_LOGW(TAG, "Bond still exists after deletion attempt - forcing complete store clear");
+                        ble_store_clear();
+                    } else {
+                        ESP_LOGI(TAG, "Verified bond was successfully deleted");
+                    }
                 } else {
-                    ESP_LOGW(TAG, "Failed to delete bond for specific peer - may be no existing bond");
+                    ESP_LOGW(TAG, "Failed to delete bond for specific peer - may already be deleted");
                 }
 
                 // Wait longer for Ubuntu - this is critical to allow stack reset
                 ESP_LOGW(TAG, "Adding extended delay before advertising restart to allow BLE stack reset");
-                vTaskDelay(pdMS_TO_TICKS(1500));  /* Give the BLE stack more time to reset - longer than before */
+                vTaskDelay(pdMS_TO_TICKS(1500));  /* Give the BLE stack more time to reset */
 
                 // Reset advertising and connection state completely
                 ble_hid_dev_state.adv_retry_count = 0;
                 ble_hid_dev_state.pairing_in_progress = false;
                 ESP_LOGI(TAG, "Reset all state after Ubuntu disconnect");
+            } else if (event->disconnect.reason == 0x0213 || event->disconnect.reason == BLE_ERR_REM_USER_CONN_TERM) {
+                // For normal disconnections initiated by the host (Ubuntu)
+                ESP_LOGI(TAG, "Normal disconnect from host - adding delay before advertising");
+
+                // Add a delay to prevent immediate auto-reconnection
+                ESP_LOGI(TAG, "Adding delay before advertising to prevent auto-reconnect");
+                vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay before advertising again
+
+                // Reset advertising retry counter
+                ble_hid_dev_state.adv_retry_count = 0;
+            } else {
+                // For other disconnect reasons
+                // Reset some state
+                ble_hid_dev_state.adv_retry_count = 0;
             }
 
             // Restart advertising after disconnect
@@ -746,7 +829,7 @@ int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             return 0;
 
         default:
-            ESP_LOGI(TAG, "Unknown GAP event: %d", event->type);
+            ESP_LOGD(TAG, "Unknown GAP event: %d", event->type);
             return 0;
     }
 
@@ -768,38 +851,43 @@ esp_err_t ble_hid_device_init(void) {
     ESP_LOGI(TAG, "Initializing BLE HID Device");
 
     // Security parameters specifically optimized for Ubuntu Bluez HID compatibility
-    ESP_LOGI(TAG, "=== Setting security parameters for Ubuntu compatibility ===");
+    ESP_LOGI(TAG, "=== Setting security parameters for maximum Ubuntu Bluez compatibility ===");
 
-    // Set security manager parameters specifically for Ubuntu Bluez compatibility
-    // Based on working example code for Ubuntu BLE HID pairing
-    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_DISP_ONLY;  // Display only capability works best with Ubuntu
-    ESP_LOGI(TAG, "SM: IO Capability = %d (DISP_ONLY)", ble_hs_cfg.sm_io_cap);
+    // Set security manager parameters for Ubuntu Bluez compatibility
+    // Use NO_INPUT_NO_OUTPUT for just-works pairing which is more compatible
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+    ESP_LOGI(TAG, "SM: IO Capability = %d (NO_IO)", ble_hs_cfg.sm_io_cap);
     ble_hs_cfg.sm_oob_data_flag = 0;
     ble_hs_cfg.sm_bonding = 1;     // Enable bonding
-    ble_hs_cfg.sm_mitm = 1;        // Enable MITM protection for Ubuntu HID
-    ble_hs_cfg.sm_sc = 0;          // Disable Secure Connections for better compatibility
+    ble_hs_cfg.sm_mitm = 0;        // Disable MITM for just-works compatibility
+    ble_hs_cfg.sm_sc = 0;          // Disable Secure Connections for Ubuntu compatibility
 
-    // Set key distribution for legacy pairing - use simpler values like working example
-    ble_hs_cfg.sm_our_key_dist = 1;
-    ble_hs_cfg.sm_their_key_dist = 1;
+    // Use conservative key distribution values that work reliably with Ubuntu Bluez
+    // Encryption key only (bit 0) ensures maximum compatibility
+    ble_hs_cfg.sm_our_key_dist = 1;   // Encryption key only
+    ble_hs_cfg.sm_their_key_dist = 1; // Encryption key only
 
-    ESP_LOGI(TAG, "Using fixed passkey: %06lu for pairing with Ubuntu", (unsigned long)FIXED_PASSKEY);
-    ESP_LOGI(TAG, "Security configured with Display capability, bonding, MITM and legacy pairing");
+    // Set our callback as the status callback to handle store events
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
-    // Initialize bond storage configuration - this is critical for Ubuntu compatibility
+    ESP_LOGI(TAG, "Security configured with No-IO capability for just-works pairing with Ubuntu");
+    ESP_LOGI(TAG, "Using legacy pairing with bonding enabled, MITM protection disabled");
+    ESP_LOGI(TAG, "Conservative key distribution (encryption key only) for maximum compatibility");
+    ESP_LOGI(TAG, "Key distribution settings: our_keys=0x%x, their_keys=0x%x",
+             ble_hs_cfg.sm_our_key_dist, ble_hs_cfg.sm_their_key_dist);
+
+    // Initialize bond storage configuration - critical for Ubuntu compatibility
     ESP_LOGI(TAG, "Initializing BLE bond storage configuration");
     ble_store_config_init();
 
-    // Register device name and appearance
-    ble_svc_gap_device_name_set("KBnMS");
-    ble_svc_gap_device_appearance_set(0x03C3); // HID combo device (keyboard + mouse)
+    // Device name will be set in ble_hid_on_sync() when MAC address is available
+    // Register appearance only 
+    ble_svc_gap_device_appearance_set(0x03C2); // HID mouse device
 
     // Initialize connection state tracking
     memset(&ble_hid_dev_state, 0, sizeof(ble_hid_dev_state));
-    for (int i = 0; i < BLE_HID_MAX_CONN; i++) {
-        ble_hid_dev_state.connected[i] = false;
-        ble_hid_dev_state.conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
-    }
+    ble_hid_dev_state.connected = false;
+    ble_hid_dev_state.conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
     // Create timers for advertising management
     // - Restart timer for delayed advertising after disconnect
@@ -829,3 +917,30 @@ esp_err_t ble_hid_device_init(void) {
 
     return ESP_OK;
 }
+
+/**
+ * Check if the BLE HID device is connected (single connection architecture)
+ */
+bool ble_hid_is_connected(void) {
+    return ble_hid_dev_state.connected;
+}
+
+/**
+ * Check if focus can be switched safely
+ */
+bool ble_hid_can_switch_focus(void) {
+    // Check if any mouse buttons are currently pressed
+    if (ble_hid_mouse_get_button_state() != 0) {
+        ESP_LOGD(TAG, "Focus locked - mouse buttons pressed: 0x%02x", ble_hid_mouse_get_button_state());
+        return false;
+    }
+    
+    // TODO: Add keyboard state check here when keyboard API is implemented
+    // if (ble_hid_keyboard_has_keys_pressed()) {
+    //     ESP_LOGD(TAG, "Focus locked - keyboard keys pressed");
+    //     return false;
+    // }
+    
+    return true;
+}
+

@@ -19,6 +19,8 @@ idf_component_register(
         soc
         hal
         common
+        ble_hid
+        usb_host
 )
 
 # Create required directories if they don't exist

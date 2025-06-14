@@ -7,6 +7,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "host_switching.h"
+#include "ble_hid_keyboard.h"  // For LED state management
+#include "uart_protocol.h"     // For neighbor communication
 
 static const char *TAG = "HOST_SWITCHING";
 static const char *NVS_NAMESPACE = "kvml";
@@ -92,6 +94,28 @@ esp_err_t host_switching_select(uint8_t target_host)
         nvs_close(nvs_handle);
     } else {
         ESP_LOGW(TAG, "Error opening NVS namespace: %s", esp_err_to_name(err));
+    }
+    
+    // If we're becoming the active host (host 0), apply our local BLE LED state
+    if (current_host == 0) {
+        ESP_LOGI(TAG, "Becoming active host - applying local BLE LED state to USB keyboard");
+        
+        // Apply local BLE LED state to USB keyboard
+        esp_err_t usb_err = ble_hid_keyboard_apply_local_led_state_to_usb();
+        if (usb_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to apply local LED state to USB: %s", esp_err_to_name(usb_err));
+        }
+        
+        // Send local BLE LED state to neighbor
+        uint8_t led_state = ble_hid_keyboard_get_local_led_state();
+        esp_err_t uart_err = uart_protocol_forward_led_state(led_state);
+        if (uart_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to send LED state to neighbor: %s", esp_err_to_name(uart_err));
+        } else {
+            ESP_LOGI(TAG, "Sent local LED state 0x%02x to neighbor", led_state);
+        }
+    } else {
+        ESP_LOGI(TAG, "Becoming inactive host (neighbor is active)");
     }
     
     // Release mutex

@@ -1,0 +1,168 @@
+# Task ID: 16
+# Title: BLE Output Reports for Keyboard LED Control
+# Status: pending
+# Dependencies: 2, 3, 11, 14
+# Priority: medium
+# Description: Implement support for BLE output reports to allow host operating systems to control keyboard LEDs (CapsLock, NumLock, ScrollLock) and synchronize LED states between the BLE host and physical USB keyboard.
+# Details:
+1. Extend the BLE HID Device Profile to handle incoming output reports from the host:
+   - Implement a callback function to process HID output reports received over BLE
+   - Parse the LED state information from the output reports (typically bit flags for CapsLock, NumLock, ScrollLock)
+   - Store the current LED state in a global variable for reference
+   - Advertise support for BLE HID output reports specifically for keyboard LEDs in the HID descriptor
+
+2. Create a mechanism to forward LED state changes to the USB keyboard:
+   - Implement a function to send USB HID output reports to the connected keyboard
+   - Ensure the USB HID output report format matches the keyboard's expectations
+   - Handle potential errors or disconnected devices gracefully
+
+3. Implement host-specific LED state caching:
+   - Maintain separate LED state caches for each connected BLE host
+   - When a BLE output report is received, update the cache for the specific host
+   - Only forward LED state changes from the currently active host to the USB keyboard
+   - Add debouncing or rate limiting if necessary to prevent excessive USB traffic
+
+4. Implement host switching LED synchronization:
+   - When switching between hosts, retrieve the cached LED state for the new active host
+   - Forward this cached state to the USB keyboard immediately after host switching
+   - Ensure only the active host's LED state affects the physical keyboard to prevent conflicts
+
+5. Add support for the neighbor module:
+   - Extend the neighbor protocol to include LED state synchronization
+   - When LED state changes from the active host, notify the neighbor board if it's in standby mode
+   - Implement message handlers for LED state updates from the neighbor
+
+6. Update the HID state management system:
+   - Integrate LED state into the overall HID state tracking
+   - Ensure LED states are properly maintained during host switching
+   - Handle edge cases like disconnected keyboards or BLE connections
+
+Example code for BLE output report callback:
+```c
+static void ble_hid_output_report_cb(uint8_t report_id, uint8_t *data, size_t len, uint8_t host_id) {
+    if (report_id == KEYBOARD_LED_REPORT_ID) {
+        // Extract LED state from data
+        uint8_t led_state = data[0];
+        
+        // Update host-specific LED state cache
+        g_keyboard_led_states[host_id] = led_state;
+        
+        // Only forward to USB keyboard if this is the active host
+        if (get_active_host_id() == host_id) {
+            usb_host_send_keyboard_led_report(led_state);
+            
+            // Notify neighbor if in standby mode
+            if (neighbor_get_state() == NEIGHBOR_STATE_STANDBY) {
+                neighbor_send_led_state(led_state);
+            }
+        }
+        
+        ESP_LOGI(TAG, "BLE LED state updated for host %d: CAPS:%d NUM:%d SCROLL:%d", 
+                 host_id,
+                 (led_state & KEYBOARD_LED_CAPSLOCK) ? 1 : 0,
+                 (led_state & KEYBOARD_LED_NUMLOCK) ? 1 : 0,
+                 (led_state & KEYBOARD_LED_SCROLLLOCK) ? 1 : 0);
+    }
+}
+```
+
+Example code for USB keyboard LED control:
+```c
+bool usb_host_send_keyboard_led_report(uint8_t led_state) {
+    if (!usb_host_is_keyboard_connected()) {
+        ESP_LOGW(TAG, "Cannot send LED report: No keyboard connected");
+        return false;
+    }
+    
+    uint8_t report[1] = { led_state };
+    esp_err_t err = usb_host_send_control_transfer(
+        USB_HID_SET_REPORT,
+        USB_HID_REPORT_TYPE_OUTPUT,
+        KEYBOARD_LED_REPORT_ID,
+        report,
+        sizeof(report)
+    );
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send LED report to USB keyboard: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    return true;
+}
+```
+
+Example code for host switching LED synchronization:
+```c
+void sync_led_state_on_host_switch(uint8_t new_host_id) {
+    // Get cached LED state for the new active host
+    uint8_t led_state = g_keyboard_led_states[new_host_id];
+    
+    // Forward to USB keyboard
+    usb_host_send_keyboard_led_report(led_state);
+    
+    ESP_LOGI(TAG, "Synced LED state after host switch to host %d: CAPS:%d NUM:%d SCROLL:%d",
+             new_host_id,
+             (led_state & KEYBOARD_LED_CAPSLOCK) ? 1 : 0,
+             (led_state & KEYBOARD_LED_NUMLOCK) ? 1 : 0,
+             (led_state & KEYBOARD_LED_SCROLLLOCK) ? 1 : 0);
+}
+```
+
+7. Update the neighbor module protocol to include LED state messages:
+```c
+// Add to neighbor message types
+typedef enum {
+    // Existing message types...
+    NEIGHBOR_MSG_LED_STATE,
+    // Other message types...
+} neighbor_msg_type_t;
+
+// LED state message structure
+typedef struct {
+    uint8_t led_state;  // Bit flags for keyboard LEDs
+} neighbor_led_state_msg_t;
+```
+
+# Test Strategy:
+1. Unit Testing:
+   - Create unit tests for the BLE output report handling function
+   - Test with various LED state combinations (all on, all off, individual LEDs)
+   - Verify that the host-specific LED state caches are correctly updated
+   - Mock the USB output function to verify it's only called for the active host
+   - Test the host switching LED synchronization function
+
+2. Integration Testing:
+   - Connect multiple BLE hosts to the device
+   - Toggle CapsLock, NumLock, and ScrollLock on each host
+   - Verify that the device correctly caches LED states for each host separately
+   - Switch between hosts and confirm that the USB keyboard's LEDs change to match the new active host
+   - Verify that LED changes on inactive hosts don't affect the USB keyboard
+
+3. Edge Case Testing:
+   - Test behavior when USB keyboard is disconnected
+   - Test behavior when BLE connection is lost during LED state change
+   - Test rapid toggling of keyboard LEDs to ensure stability
+   - Verify proper LED synchronization after reconnection events
+   - Test behavior when switching to a host with no cached LED state
+
+4. Neighbor Module Testing:
+   - Set up primary and secondary boards
+   - Connect BLE host to primary board and toggle keyboard LEDs
+   - Verify that LED states are properly synchronized to secondary board
+   - Test in both active and standby modes
+   - Verify LED states are maintained during board role switching
+   - Confirm that only the active host's LED state is forwarded to the neighbor
+
+5. System Testing:
+   - Test the complete system with all components
+   - Verify LED states are correctly maintained during host switching
+   - Test with different keyboard models to ensure compatibility
+   - Verify LED states persist correctly across system reboots
+   - Confirm that host-specific LED states are preserved when reconnecting to previously paired hosts
+
+6. Performance Testing:
+   - Measure latency between BLE output report reception and USB LED update
+   - Ensure LED state changes don't impact other system functions
+   - Test under high system load to verify reliable operation
+   - Measure the time taken to synchronize LED states during host switching

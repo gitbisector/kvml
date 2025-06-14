@@ -1,0 +1,69 @@
+# Task ID: 4
+# Title: UART Communication Protocol Implementation
+# Status: done
+# Dependencies: 1
+# Priority: high
+# Description: Develop the UART protocol for communication between the two ESP32-S3 boards, including frame structure, message types, and error handling.
+# Details:
+1. Define binary frame structure: preamble, type, length, payload, CRC16
+2. Implement message types: BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT
+3. Create UART initialization with appropriate baud rate (recommend 921600)
+4. Implement transmit and receive buffers with proper synchronization
+5. Add CRC16 calculation and verification
+6. Implement basic ACK mechanism for reliable transmission
+7. Create error recovery for frame corruption
+
+Frame structure:
+```c
+typedef struct {
+    uint8_t preamble[2]; // Fixed value, e.g., 0xAA, 0x55
+    uint8_t type;        // Message type
+    uint16_t length;     // Payload length
+    uint8_t payload[0];  // Variable length payload
+    // CRC16 follows payload
+} __attribute__((packed)) uart_frame_t;
+
+enum {
+    FRAME_TYPE_BOARD_STATE = 0x01,
+    FRAME_TYPE_INPUT_KEY = 0x02,
+    FRAME_TYPE_INPUT_MOUSE = 0x03,
+    FRAME_TYPE_HEARTBEAT = 0x04,
+    FRAME_TYPE_ACK = 0xF0,
+    FRAME_TYPE_NACK = 0xF1
+};
+```
+
+# Test Strategy:
+Test UART communication with various message types and payloads. Verify CRC16 error detection by introducing corrupted frames. Test recovery from frame loss. Measure throughput and latency to ensure performance meets requirements.
+
+# Subtasks:
+## 1. Implement UART Initialization and Configuration [done]
+### Dependencies: None
+### Description: Set up the UART hardware with the appropriate baud rate and pin configuration for both ESP32-S3 boards.
+### Details:
+Initialize UART with 921600 baud rate, 8 data bits, no parity, 1 stop bit. Configure TX and RX pins according to the ESP32-S3 pinout. Enable UART interrupts for efficient data handling.
+
+## 2. Develop Frame Encoding and Decoding Functions [done]
+### Dependencies: 4.1
+### Description: Create functions to encode and decode UART frames according to the defined structure, including preamble, type, length, payload, and CRC16.
+### Details:
+Implement encode_frame() and decode_frame() functions. Use the uart_frame_t struct and FRAME_TYPE_* enums. Ensure proper byte ordering and alignment. Include CRC16 calculation and verification in these functions.
+
+## 3. Implement Transmit and Receive Buffers [done]
+### Dependencies: 4.1
+### Description: Create circular buffers for UART transmit and receive operations with proper synchronization mechanisms.
+### Details:
+Implement tx_buffer and rx_buffer as circular buffers. Use mutexes or critical sections for thread-safe access. Include functions for buffer management: buffer_write(), buffer_read(), buffer_available().
+
+## 4. Develop Message Type Handlers [done]
+### Dependencies: 4.2, 4.3
+### Description: Create handler functions for each message type (BOARD_STATE, INPUT_KEY, INPUT_MOUSE, HEARTBEAT) to process incoming frames and generate appropriate responses.
+### Details:
+Implement separate handler functions for each FRAME_TYPE_*. Include logic for processing payloads and generating response frames. Integrate with the main application logic for actions like input processing and board state updates.
+
+## 5. Implement Basic ACK Mechanism and Error Recovery [done]
+### Dependencies: 4.2, 4.3, 4.4
+### Description: Develop a simple acknowledgment system and error recovery for frame corruption.
+### Details:
+Implement a basic ACK system using FRAME_TYPE_ACK and FRAME_TYPE_NACK. Create error recovery procedures for handling frame corruption, including re-synchronization of communication.
+
