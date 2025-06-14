@@ -1,0 +1,68 @@
+{
+  "name": "KVML ESP32-S3 Development",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "TZ": "${localEnv:TZ:America/Los_Angeles}"
+    }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+    "--device=/dev/ttyACM0:/dev/ttyACM0",
+    "--device=/dev/ttyACM1:/dev/ttyACM1",
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "espressif.esp-idf-extension",
+        "ms-python.python",
+        "eamodio.gitlens",
+        "ms-vscode.cmake-tools"
+      ],
+      "settings": {
+        "C_Cpp.default.compilerPath": "/home/ubuntu/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
+        "C_Cpp.default.cStandard": "c17",
+        "C_Cpp.default.cppStandard": "c++17",
+        "C_Cpp.default.includePath": [
+          "/home/ubuntu/esp/esp-idf/components/**",
+          "${workspaceFolder}/components/**",
+          "${workspaceFolder}/main/**"
+        ],
+        "C_Cpp.default.defines": [
+          "ESP_PLATFORM",
+          "IDF_VER"
+        ],
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+          },
+          "zsh": {
+            "path": "zsh"
+          }
+        },
+        "files.associations": {
+          "*.h": "c",
+          "*.c": "c"
+        }
+      }
+    }
+  },
+  "remoteUser": "ubuntu",
+  "mounts": [
+    "source=kvml-bashhistory,target=/commandhistory,type=volume",
+    "source=kvml-config,target=/home/ubuntu/.claude,type=volume"
+  ],
+  "remoteEnv": {
+    "IDF_PATH": "/home/ubuntu/esp/esp-idf",
+    "CLAUDE_CONFIG_DIR": "/home/ubuntu/.claude",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "sudo /usr/local/bin/init-firewall.sh"
+}

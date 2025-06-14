@@ -9,9 +9,19 @@ KVML (Keyboard and Video Mouse Link) is a dual ESP32-S3 Bluetooth HID multiplexe
 ## Essential Commands
 
 ### Environment Setup
+
+#### Using the Development Container (Recommended)
 ```bash
-# Source ESP-IDF environment (required before any operations)
-source /home/ties/project/esp32s3/.env
+# Open the kvml/ directory in VS Code
+# Click "Reopen in Container" when prompted
+# ESP-IDF environment is automatically configured
+```
+
+#### Manual Environment Setup
+```bash
+# ESP-IDF is already available in some container environments
+# If not available, install ESP-IDF manually
+# No additional environment setup needed in devcontainer
 
 # Configure WiFi credentials for web UI
 ./setup_wifi_config.sh
@@ -67,8 +77,17 @@ Master/slave coordination via UART Protocol
 
 ## Development Notes
 
-- Always source ESP-IDF environment before running idf.py commands
-- Use two USB ports for master/slave board development
+- **Development Container**: Use `.devcontainer/` for complete ESP32-S3 development environment
+- ESP-IDF is pre-configured in the container environment
+- Use two USB ports for master/slave board development (`/dev/ttyACM0`, `/dev/ttyACM1`)
 - Web UI requires WiFi configuration for remote access
 - Components follow ESP-IDF standards with CMakeLists.txt and separate include/src structure
 - UART protocol enables seamless switching between host computers
+
+## Container Development
+
+The project includes a complete VS Code devcontainer setup:
+- Pre-installed ESP-IDF with ESP32-S3 support
+- C/C++ IntelliSense and ESP-IDF extensions
+- Automatic USB device mounting for flashing
+- Claude Code integration for AI-assisted development
