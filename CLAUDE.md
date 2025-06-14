@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Claude Code Configuration
+
+### Model Default
+Use `sonnet` (claude-sonnet-4-20250514) as the default model for this project.
+
 ## Project Overview
 
 KVML (Keyboard and Video Mouse Link) is a dual ESP32-S3 Bluetooth HID multiplexer that routes USB keyboard/mouse input to two computers via Bluetooth. It uses a master/slave architecture with inter-board UART communication.

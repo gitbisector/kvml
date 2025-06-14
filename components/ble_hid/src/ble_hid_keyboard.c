@@ -59,10 +59,10 @@ static const uint8_t keyboard_hid_report_map[] = {
 esp_err_t ble_hid_keyboard_init(void)
 {
     ESP_LOGI(TAG, "Initializing BLE keyboard HID");
-    
+
     // Clear keyboard state
     memset(&keyboard_state, 0, sizeof(keyboard_state));
-    
+
     ESP_LOGI(TAG, "BLE keyboard HID initialized successfully");
     return ESP_OK;
 }
@@ -73,21 +73,21 @@ void ble_hid_keyboard_send_report(uint8_t conn_idx, const uint8_t *report, size_
         ESP_LOGD(TAG, "Keyboard: Not connected");
         return;
     }
-    
+
     if (len != BLE_HID_KEYBOARD_REPORT_LEN) {
         ESP_LOGE(TAG, "Invalid keyboard report length: %d (expected %d)", (int)len, BLE_HID_KEYBOARD_REPORT_LEN);
         return;
     }
-    
+
     // Check if keyboard input report handle is initialized
     if (ble_hid_svc_char_handles[HANDLE_KEYBOARD_INPUT_REPORT] == 0) {
         ESP_LOGW(TAG, "Keyboard input report handle not initialized");
         return;
     }
-    
-    ESP_LOGD(TAG, "Sending keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x", 
+
+    ESP_LOGD(TAG, "Sending keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x",
              report[0], report[2], report[3], report[4], report[5], report[6], report[7]);
-    
+
     // BLE HID: Send report data directly without Report ID
     // (GATT characteristic handle identifies the report type)
     struct os_mbuf *om = ble_hs_mbuf_from_flat(report, len);
@@ -118,10 +118,10 @@ esp_err_t ble_hid_keyboard_key_press(uint8_t key_code, uint8_t modifiers)
     if (!ble_hid_is_connected()) {
         return ESP_ERR_INVALID_STATE;
     }
-    
+
     // Update modifiers
     keyboard_state.modifiers = modifiers;
-    
+
     // Add key to the list if not already present and there's space
     bool key_found = false;
     for (int i = 0; i < 6; i++) {
@@ -130,12 +130,12 @@ esp_err_t ble_hid_keyboard_key_press(uint8_t key_code, uint8_t modifiers)
             break;
         }
     }
-    
+
     if (!key_found && keyboard_state.key_count < 6) {
         keyboard_state.keys[keyboard_state.key_count] = key_code;
         keyboard_state.key_count++;
     }
-    
+
     // Send the updated report
     return ble_hid_keyboard_report(keyboard_state.modifiers, 0, keyboard_state.keys);
 }
@@ -145,7 +145,7 @@ esp_err_t ble_hid_keyboard_key_release(uint8_t key_code)
     if (!ble_hid_is_connected()) {
         return ESP_ERR_INVALID_STATE;
     }
-    
+
     // Remove key from the list
     for (int i = 0; i < 6; i++) {
         if (keyboard_state.keys[i] == key_code) {
@@ -158,7 +158,7 @@ esp_err_t ble_hid_keyboard_key_release(uint8_t key_code)
             break;
         }
     }
-    
+
     // Send the updated report
     return ble_hid_keyboard_report(keyboard_state.modifiers, 0, keyboard_state.keys);
 }
@@ -167,7 +167,7 @@ esp_err_t ble_hid_keyboard_release_all(void)
 {
     // Clear all state
     memset(&keyboard_state, 0, sizeof(keyboard_state));
-    
+
     // Send empty report
     uint8_t empty_keys[6] = {0};
     return ble_hid_keyboard_report(0, 0, empty_keys);
@@ -176,14 +176,14 @@ esp_err_t ble_hid_keyboard_release_all(void)
 esp_err_t ble_hid_keyboard_report(uint8_t modifiers, uint8_t reserved, const uint8_t keys[6])
 {
 #if BLE_HID_DEBUG_DISABLE_REPORTING
-    ESP_LOGI(TAG, "[DEBUG] BLE DISABLED - Keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x", 
+    ESP_LOGI(TAG, "[DEBUG] BLE DISABLED - Keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x",
              modifiers, keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]);
     return ESP_OK;
 #else
     if (!ble_hid_is_connected()) {
         return ESP_ERR_INVALID_STATE;
     }
-    
+
     // Create keyboard report: [modifiers, reserved, key1, key2, key3, key4, key5, key6]
     uint8_t report[BLE_HID_KEYBOARD_REPORT_LEN] = {
         modifiers,  // Modifier byte
@@ -195,13 +195,13 @@ esp_err_t ble_hid_keyboard_report(uint8_t modifiers, uint8_t reserved, const uin
         keys[4],    // Key 5
         keys[5]     // Key 6
     };
-    
-    ESP_LOGI(TAG, "Keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x", 
+
+    ESP_LOGD(TAG, "Keyboard report: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x",
              modifiers, keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]);
-    
+
     // Send the keyboard report
     ble_hid_keyboard_send_report(0, report, BLE_HID_KEYBOARD_REPORT_LEN);
-    
+
     return ESP_OK;
 #endif
 }
@@ -211,14 +211,14 @@ esp_err_t ble_hid_keyboard_type_string(const char *text)
     if (!text) {
         return ESP_ERR_INVALID_ARG;
     }
-    
+
     ESP_LOGI(TAG, "Typing string: %s", text);
-    
+
     for (int i = 0; text[i] != '\0'; i++) {
         char c = text[i];
         uint8_t key_code = 0;
         uint8_t modifiers = 0;
-        
+
         // Simple character to HID key mapping
         if (c >= 'a' && c <= 'z') {
             key_code = HID_KEY_A + (c - 'a');
@@ -237,16 +237,16 @@ esp_err_t ble_hid_keyboard_type_string(const char *text)
             ESP_LOGW(TAG, "Unsupported character: '%c'", c);
             continue;
         }
-        
+
         // Press key
         ble_hid_keyboard_key_press(key_code, modifiers);
         vTaskDelay(pdMS_TO_TICKS(50)); // Small delay between keypresses
-        
+
         // Release key
         ble_hid_keyboard_key_release(key_code);
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    
+
     return ESP_OK;
 }
 
@@ -262,20 +262,20 @@ esp_err_t ble_hid_keyboard_handle_output_report(uint16_t conn_handle, const uint
         ESP_LOGE(TAG, "Invalid output report: data=%p, len=%d", report_data, (int)len);
         return ESP_ERR_INVALID_ARG;
     }
-    
+
     uint8_t led_state = report_data[0];
-    
+
     // Update local BLE LED state cache
     uint8_t old_state = local_ble_led_state;
     local_ble_led_state = led_state;
-    
-    ESP_LOGI(TAG, "Local BLE LED state update (conn=0x%04x): 0x%02x -> 0x%02x", 
+
+    ESP_LOGI(TAG, "Local BLE LED state update (conn=0x%04x): 0x%02x -> 0x%02x",
              conn_handle, old_state, led_state);
-    ESP_LOGI(TAG, "  NumLock: %s, CapsLock: %s, ScrollLock: %s", 
+    ESP_LOGI(TAG, "  NumLock: %s, CapsLock: %s, ScrollLock: %s",
              (led_state & HID_LED_NUM_LOCK) ? "ON" : "OFF",
-             (led_state & HID_LED_CAPS_LOCK) ? "ON" : "OFF", 
+             (led_state & HID_LED_CAPS_LOCK) ? "ON" : "OFF",
              (led_state & HID_LED_SCROLL_LOCK) ? "ON" : "OFF");
-    
+
     // If this board is currently active for input routing, apply LED state to USB keyboard immediately
     bool is_input_active = uart_protocol_is_input_active();
     if (is_input_active) {
@@ -286,7 +286,7 @@ esp_err_t ble_hid_keyboard_handle_output_report(uint16_t conn_handle, const uint
         } else {
             ESP_LOGI(TAG, "LED state applied to USB keyboard: 0x%02x", led_state);
         }
-        
+
         // Also send to neighbor so they have our current state
         esp_err_t uart_ret = uart_protocol_forward_led_state(led_state);
         if (uart_ret != ESP_OK) {
@@ -297,24 +297,24 @@ esp_err_t ble_hid_keyboard_handle_output_report(uint16_t conn_handle, const uint
     } else {
         ESP_LOGI(TAG, "This board is inactive (neighbor is active) - LED state only cached");
     }
-    
+
     return ESP_OK;
 }
 
 
 esp_err_t ble_hid_keyboard_apply_local_led_state_to_usb(void) {
     ESP_LOGI(TAG, "Applying local BLE LED state to USB keyboard: 0x%02x", local_ble_led_state);
-    ESP_LOGI(TAG, "  NumLock: %s, CapsLock: %s, ScrollLock: %s", 
+    ESP_LOGI(TAG, "  NumLock: %s, CapsLock: %s, ScrollLock: %s",
              (local_ble_led_state & HID_LED_NUM_LOCK) ? "ON" : "OFF",
-             (local_ble_led_state & HID_LED_CAPS_LOCK) ? "ON" : "OFF", 
+             (local_ble_led_state & HID_LED_CAPS_LOCK) ? "ON" : "OFF",
              (local_ble_led_state & HID_LED_SCROLL_LOCK) ? "ON" : "OFF");
-    
+
     esp_err_t ret = usb_host_send_keyboard_output_report(local_ble_led_state);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to apply LED state to USB keyboard: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "LED state applied to USB keyboard: 0x%02x", local_ble_led_state);
     }
-    
+
     return ret;
 }

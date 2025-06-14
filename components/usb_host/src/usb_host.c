@@ -61,6 +61,11 @@ static QueueHandle_t usb_host_event_queue = NULL;
 static TaskHandle_t usb_host_task_handle = NULL;
 static bool usb_host_initialized = false;
 
+// Forward declarations
+static esp_err_t handle_consumer_control(uint16_t usage_code);
+
+// External function declarations
+extern bool uart_protocol_is_input_active(void);
 
 /**
  * @brief USB enumeration filter callback to handle problematic devices
@@ -99,6 +104,7 @@ static bool usb_enum_filter_cb(const usb_device_desc_t *device_desc, uint8_t *bC
 // Forward declarations
 static esp_err_t reinitialize_usb_host(void);
 static void usb_host_task(void *arg);
+static void dump_usb_device_descriptors(hid_host_device_handle_t device_handle);
 
 /**
  * @brief Force USB bus reset and re-enumeration
@@ -236,11 +242,11 @@ static void led_restore_timer_callback(void* arg);
 static void led_restore_timer_callback(void* arg)
 {
     ESP_LOGI(TAG, "LED restore timer triggered - restoring to current LED state");
-    
+
     // Determine the correct LED state based on which host is currently active
     uint8_t current_state = 0x00;
     bool is_input_active = uart_protocol_is_input_active();
-    
+
     if (is_input_active) {
         // This board is active - use local BLE LED state
         current_state = ble_hid_keyboard_get_local_led_state();
@@ -250,19 +256,19 @@ static void led_restore_timer_callback(void* arg)
         current_state = usb_led_state.led_state_known ? usb_led_state.current_led_state : 0x00;
         ESP_LOGI(TAG, "This board is inactive - using tracked USB state: 0x%02x", current_state);
     }
-    
-    ESP_LOGI(TAG, "Restoring to current USB LED state: 0x%02x (known: %s)", 
+
+    ESP_LOGI(TAG, "Restoring to current USB LED state: 0x%02x (known: %s)",
              current_state, usb_led_state.led_state_known ? "YES" : "NO");
-    
+
     // Force send the LED state to hardware even if our tracking thinks it's already correct
     // The hardware might still be showing the blink state due to timing issues
     if (hid_device.connected) {
         esp_err_t ret = ESP_FAIL;
         const int MAX_RETRIES = 3;
         const int RETRY_DELAY_MS = 10;
-        
+
         ESP_LOGI(TAG, "Force-sending LED state to hardware (bypassing deduplication): 0x%02x", current_state);
-        
+
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             ret = hid_class_request_set_report(
                 hid_device.handle,
@@ -271,7 +277,7 @@ static void led_restore_timer_callback(void* arg)
                 &current_state,
                 sizeof(current_state)
             );
-            
+
             if (ret == ESP_OK) {
                 if (attempt > 0) {
                     ESP_LOGI(TAG, "LED state force-applied on attempt %d: 0x%02x", attempt + 1, current_state);
@@ -283,22 +289,22 @@ static void led_restore_timer_callback(void* arg)
                 usb_led_state.led_state_known = true;
                 break;
             } else if (ret == ESP_ERR_NOT_FINISHED && attempt < MAX_RETRIES - 1) {
-                ESP_LOGD(TAG, "USB busy during restore (attempt %d/%d), retrying in %dms", 
+                ESP_LOGD(TAG, "USB busy during restore (attempt %d/%d), retrying in %dms",
                          attempt + 1, MAX_RETRIES, RETRY_DELAY_MS);
                 vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
             } else {
-                ESP_LOGW(TAG, "LED restore failed (attempt %d/%d): %s", 
+                ESP_LOGW(TAG, "LED restore failed (attempt %d/%d): %s",
                          attempt + 1, MAX_RETRIES, esp_err_to_name(ret));
             }
         }
-        
+
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "All LED restore attempts failed, hardware state may be incorrect");
         }
     } else {
         ESP_LOGW(TAG, "No keyboard connected for LED restore");
     }
-    
+
     // Clear the blink flag to allow LED state changes again
     blink_timer_pending = false;
     ESP_LOGI(TAG, "LED restore timer completed - LED state changes unblocked");
@@ -312,7 +318,7 @@ static void initialize_led_state(void)
     if (!hid_device.connected) {
         return;
     }
-    
+
     // Create LED restore timer if not already created
     if (hotkey_state.led_restore_timer == NULL) {
         esp_timer_create_args_t timer_args = {
@@ -327,16 +333,9 @@ static void initialize_led_state(void)
             ESP_LOGI(TAG, "LED restore timer created successfully");
         }
     }
-    
-    // Try to initialize with all LEDs off - this is safest default
-    esp_err_t ret = usb_keyboard_set_led_state(0x00);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "USB LED state initialized to all OFF");
-    } else {
-        ESP_LOGW(TAG, "Failed to initialize USB LED state, will assume OFF");
-        usb_led_state.current_led_state = 0x00;
-        usb_led_state.led_state_known = false;
-    }
+
+    usb_led_state.current_led_state = 0x00;
+    usb_led_state.led_state_known = false;
 }
 
 /**
@@ -367,8 +366,8 @@ static esp_err_t usb_keyboard_set_led_state(uint8_t led_state)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Setting keyboard LED state: 0x%02x -> 0x%02x (NumLock: %s, CapsLock: %s, ScrollLock: %s)", 
-             usb_led_state.led_state_known ? usb_led_state.current_led_state : 0xFF, 
+    ESP_LOGI(TAG, "Setting keyboard LED state: 0x%02x -> 0x%02x (NumLock: %s, CapsLock: %s, ScrollLock: %s)",
+             usb_led_state.led_state_known ? usb_led_state.current_led_state : 0xFF,
              led_state,
              (led_state & 0x01) ? "ON" : "OFF",  // NumLock
              (led_state & 0x02) ? "ON" : "OFF",  // CapsLock
@@ -378,7 +377,7 @@ static esp_err_t usb_keyboard_set_led_state(uint8_t led_state)
     esp_err_t ret = ESP_FAIL;
     const int MAX_RETRIES = 3;
     const int RETRY_DELAY_MS = 10;
-    
+
     for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
         ret = hid_class_request_set_report(
             hid_device.handle,        // hid_host_device_handle_t
@@ -387,7 +386,7 @@ static esp_err_t usb_keyboard_set_led_state(uint8_t led_state)
             &led_state,               // Pointer to report data
             sizeof(led_state)         // Length = 1 byte
         );
-        
+
         if (ret == ESP_OK) {
             if (attempt > 0) {
                 ESP_LOGI(TAG, "USB LED state set successfully on attempt %d: 0x%02x", attempt + 1, led_state);
@@ -399,15 +398,15 @@ static esp_err_t usb_keyboard_set_led_state(uint8_t led_state)
             usb_led_state.led_state_known = true;
             break;
         } else if (ret == ESP_ERR_NOT_FINISHED && attempt < MAX_RETRIES - 1) {
-            ESP_LOGD(TAG, "USB busy (attempt %d/%d), retrying LED command in %dms", 
+            ESP_LOGD(TAG, "USB busy (attempt %d/%d), retrying LED command in %dms",
                      attempt + 1, MAX_RETRIES, RETRY_DELAY_MS);
             vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
         } else {
-            ESP_LOGE(TAG, "Failed to send LED output report (attempt %d/%d): %s", 
+            ESP_LOGE(TAG, "Failed to send LED output report (attempt %d/%d): %s",
                      attempt + 1, MAX_RETRIES, esp_err_to_name(ret));
         }
     }
-    
+
     return ret;
 }
 
@@ -418,31 +417,31 @@ static void trigger_capslock_blink(void)
 {
     // Get the current USB LED state as the baseline
     uint8_t current_state = 0x00;  // Default to all LEDs off
-    
+
     if (usb_led_state.led_state_known) {
         current_state = usb_led_state.current_led_state;
         ESP_LOGI(TAG, "Using current USB CapsLock state: %s", (current_state & 0x02) ? "ON" : "OFF");
     } else {
         ESP_LOGI(TAG, "No known USB LED state, assuming OFF");
     }
-    
+
     // Create blink by toggling CapsLock bit (XOR)
     uint8_t blink_state = current_state ^ 0x02;  // Toggle CapsLock bit (bit 1 = 0x02)
-    
+
     ESP_LOGI(TAG, "Host switching detected! CapsLock blink: %s -> %s -> %s",
              (current_state & 0x02) ? "ON" : "OFF",
-             (blink_state & 0x02) ? "ON" : "OFF", 
+             (blink_state & 0x02) ? "ON" : "OFF",
              (current_state & 0x02) ? "ON" : "OFF");
-    
+
     // Send blink state to hardware but preserve our tracked current state
     bool had_known_state = usb_led_state.led_state_known;
-    
+
     if (hid_device.connected) {
         // Send blink state with retry logic for busy USB
         esp_err_t ret = ESP_FAIL;
         const int MAX_RETRIES = 3;
         const int RETRY_DELAY_MS = 10;
-        
+
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             ret = hid_class_request_set_report(
                 hid_device.handle,
@@ -451,10 +450,10 @@ static void trigger_capslock_blink(void)
                 &blink_state,
                 sizeof(blink_state)
             );
-            
+
             if (ret == ESP_OK) {
                 if (attempt > 0) {
-                    ESP_LOGI(TAG, "LED blink applied on attempt %d: 0x%02x (current state tracking preserved)", 
+                    ESP_LOGI(TAG, "LED blink applied on attempt %d: 0x%02x (current state tracking preserved)",
                              attempt + 1, blink_state);
                 } else {
                     ESP_LOGI(TAG, "LED blink applied: 0x%02x (current state tracking preserved)", blink_state);
@@ -464,15 +463,15 @@ static void trigger_capslock_blink(void)
                 usb_led_state.led_state_known = had_known_state;
                 break;
             } else if (ret == ESP_ERR_NOT_FINISHED && attempt < MAX_RETRIES - 1) {
-                ESP_LOGD(TAG, "USB busy during blink (attempt %d/%d), retrying in %dms", 
+                ESP_LOGD(TAG, "USB busy during blink (attempt %d/%d), retrying in %dms",
                          attempt + 1, MAX_RETRIES, RETRY_DELAY_MS);
                 vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
             } else {
-                ESP_LOGW(TAG, "LED blink failed (attempt %d/%d): %s", 
+                ESP_LOGW(TAG, "LED blink failed (attempt %d/%d): %s",
                          attempt + 1, MAX_RETRIES, esp_err_to_name(ret));
             }
         }
-        
+
         if (ret != ESP_OK) {
             return;
         }
@@ -480,13 +479,13 @@ static void trigger_capslock_blink(void)
         ESP_LOGW(TAG, "No keyboard connected for blink");
         return;
     }
-    
+
     // Set flag to block LED state changes during blink
     blink_timer_pending = true;
-    
+
     // Start timer to restore LED state after blink duration
     if (hotkey_state.led_restore_timer != NULL) {
-        esp_err_t timer_ret = esp_timer_start_once(hotkey_state.led_restore_timer, 
+        esp_err_t timer_ret = esp_timer_start_once(hotkey_state.led_restore_timer,
                                                   CAPSLOCK_BLINK_DURATION_MS * 1000);  // Convert ms to us
         if (timer_ret != ESP_OK) {
             ESP_LOGW(TAG, "Failed to start LED restore timer: %s", esp_err_to_name(timer_ret));
@@ -498,7 +497,7 @@ static void trigger_capslock_blink(void)
                 ESP_LOGW(TAG, "Immediate LED restore also failed, LED may remain in wrong state");
             }
         } else {
-            ESP_LOGI(TAG, "LED restore timer started - will restore to current state in %dms", 
+            ESP_LOGI(TAG, "LED restore timer started - will restore to current state in %dms",
                      CAPSLOCK_BLINK_DURATION_MS);
             ESP_LOGI(TAG, "LED state changes blocked during blink period");
         }
@@ -513,7 +512,7 @@ static void trigger_capslock_blink(void)
             ESP_LOGW(TAG, "Immediate LED restore failed, LED may remain in wrong state");
         }
     }
-    
+
     ESP_LOGI(TAG, "CapsLock LED blink initiated");
 }
 
@@ -528,10 +527,10 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
 {
     uint64_t current_time = esp_timer_get_time();
     bool left_ctrl_pressed = (modifier & 0x01) != 0;  // Left Ctrl is bit 0
-    
+
     // Check for other modifier keys (Shift, Alt, Right Ctrl, etc.)
     bool other_modifiers_pressed = (modifier & 0xFE) != 0;  // Any modifier except Left Ctrl
-    
+
     // Check if any non-Ctrl keys are pressed
     bool other_keys_pressed = false;
     for (int i = 0; i < 6; i++) {
@@ -540,10 +539,10 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
             break;
         }
     }
-    
+
     // Track if Ctrl was used in combination with other keys/modifiers
     static bool ctrl_was_contaminated = false;
-    
+
     // If Left Ctrl is pressed with other keys/modifiers, mark as contaminated
     if (left_ctrl_pressed && (other_keys_pressed || other_modifiers_pressed)) {
         ctrl_was_contaminated = true;
@@ -553,7 +552,7 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
         }
         return false;
     }
-    
+
     // If other keys or modifiers are pressed during Ctrl sequence, invalidate it
     if ((other_keys_pressed || other_modifiers_pressed) && hotkey_state.waiting_for_second_ctrl) {
         if (other_keys_pressed) {
@@ -566,14 +565,14 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
         hotkey_state.waiting_for_second_ctrl = false;
         return false;
     }
-    
+
     if (left_ctrl_pressed && !other_keys_pressed && !other_modifiers_pressed) {
         // Pure Left Ctrl press - but check if it was contaminated
         if (ctrl_was_contaminated) {
             ESP_LOGD(TAG, "Left Ctrl pressed but was contaminated by previous combination - ignoring");
             return false;
         }
-        
+
         if (!hotkey_state.waiting_for_second_ctrl) {
             // First Ctrl press detected
             hotkey_state.last_left_ctrl_press_time = current_time;
@@ -598,7 +597,7 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
     } else if (!left_ctrl_pressed) {
         // Left Ctrl released - clear contamination and handle timeout
         ctrl_was_contaminated = false;
-        
+
         if (hotkey_state.waiting_for_second_ctrl) {
             uint64_t time_diff = current_time - hotkey_state.last_left_ctrl_press_time;
             if (time_diff > HOTKEY_TIMEOUT_US) {
@@ -607,7 +606,7 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
             }
         }
     }
-    
+
     return false;
 }
 
@@ -617,20 +616,20 @@ static bool detect_ctrl_hotkey(uint8_t modifier, const uint8_t keys[6])
 static void process_host_switch(void)
 {
     ESP_LOGI(TAG, "Processing host switch request...");
-    
+
     // Trigger visual feedback
     trigger_capslock_blink();
-    
+
     // Toggle roles: if we're currently active, make neighbor active (and us inactive)
     // If we're currently inactive, make ourselves active (and neighbor inactive)
     bool current_state = uart_protocol_is_input_active();
     bool make_neighbor_active = current_state;  // If we're active, make neighbor active
-    
+
     esp_err_t uart_ret = uart_protocol_send_input_routing_command(make_neighbor_active);
     if (uart_ret != ESP_OK && uart_ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Failed to send input routing command to neighbor: %s", esp_err_to_name(uart_ret));
     }
-    
+
     if (make_neighbor_active) {
         ESP_LOGI(TAG, "Host switch: neighbor is now ACTIVE, this board is now INACTIVE");
         // Call host switching module to handle the switch to host 1 (neighbor active)
@@ -646,7 +645,7 @@ static void process_host_switch(void)
             ESP_LOGW(TAG, "Failed to update host switching module state: %s", esp_err_to_name(host_switch_ret));
         }
     }
-    
+
     // Reset hotkey state
     hotkey_state.hotkey_detected = false;
 }
@@ -780,7 +779,7 @@ static void hid_host_keyboard_report_callback(const uint8_t *const data, const i
 
         // Only send BLE report if state changed
         if (report_changed) {
-            ESP_LOGI(TAG, "Keyboard state changed: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x",
+            ESP_LOGD(TAG, "Keyboard state changed: mod=0x%02x keys=%02x,%02x,%02x,%02x,%02x,%02x",
                 modifier, keys[0], keys[1], keys[2], keys[3], keys[4], keys[5]);
 
             // Check for Ctrl+Ctrl hotkey sequence (keyboard board always handles hotkey detection)
@@ -821,6 +820,55 @@ static void hid_host_keyboard_report_callback(const uint8_t *const data, const i
 }
 
 /**
+ * @brief USB HID Host Consumer Control Interface report callback handler
+ *
+ * Process received consumer control reports (multimedia keys, etc)
+ *
+ * @param[in] data    Pointer to input report data buffer
+ * @param[in] length  Length of input report data buffer
+ */
+static void hid_host_consumer_report_callback(const uint8_t *const data, const int length)
+{
+    ESP_LOGD(TAG, "Consumer control report received (length=%d)", length);
+
+    // Extract usage code from the report data
+    uint16_t usage_code = 0;
+
+    // Handle different report formats
+    if (length == 3) {
+        // Standard 3-byte consumer control report
+        if (data[0] == 0x02) {
+            // Standard format with 0x02 prefix
+            usage_code = (data[1] | (data[2] << 8));
+            ESP_LOGD(TAG, "Standard consumer control format: prefix=0x02, usage=0x%04x", usage_code);
+        } else {
+            // Other formats that might be function keys
+            // Some keyboards use different report formats for Fn+F keys
+            if (data[1] == 0x0C) {
+                // Usage page 0x0C is Consumer Page
+                usage_code = data[2];
+                ESP_LOGD(TAG, "Function key with consumer usage page: usage=0x%04x", usage_code);
+            } else {
+                // Try to interpret directly
+                usage_code = (data[1] | (data[2] << 8));
+                ESP_LOGD(TAG, "Alternative Fn key format detected: usage=0x%04x", usage_code);
+            }
+        }
+    } else if (length == 2) {
+        // Some keyboards use 2-byte format for consumer controls
+        usage_code = data[1];
+        ESP_LOGD(TAG, "Short consumer control format: usage=0x%04x", usage_code);
+    } else {
+        ESP_LOGW(TAG, "Unexpected consumer control report length: %d", length);
+        return;
+    }
+
+    // Log the detected usage code
+    ESP_LOGD(TAG, "Consumer control usage code: 0x%04x", usage_code);
+    handle_consumer_control(usage_code);
+}
+
+/**
  * @brief USB HID Host Mouse Interface report callback handler
  *
  * Process received mouse reports and update mouse state
@@ -850,6 +898,61 @@ static void hid_host_mouse_report_callback(const uint8_t *const data, const int 
             hex_buf[0] = 0;
             ascii_buf[0] = 0;
         }
+    }
+
+    // Check for consumer control reports (multimedia keys) and function keys
+    if (length == 3) {
+        ESP_LOGD(TAG, "Analyzing 3-byte report with first byte: 0x%02x", data[0]);
+
+        // Pattern 0: Standard mouse reports usually have first byte with only button bits set (0-7)
+        // So any report with the first byte > 0x07 is likely not a standard mouse report
+        bool is_standard_mouse = (data[0] <= 0x07);
+
+        // Pattern 1: First byte is 0x02 for common consumer control (multimedia) keys
+        if (data[0] == 0x02) {
+            ESP_LOGD(TAG, "Detected consumer control report (length=3, 0x02), routing to consumer handler");
+            hid_host_consumer_report_callback(data, length);
+            return;
+        }
+
+        // Pattern 2: Any report ID that's not a standard mouse report ID
+        // Only 0x00 and 0x01 are commonly used for mouse buttons
+        if (!is_standard_mouse) {
+            ESP_LOGD(TAG, "Non-standard mouse report ID: 0x%02x, likely function key", data[0]);
+
+            // Route all these to consumer control handler to let it try to interpret
+            ESP_LOGD(TAG, "Routing possible function key to consumer handler: %02x %02x %02x",
+                    data[0], data[1], data[2]);
+            hid_host_consumer_report_callback(data, length);
+            return;
+        }
+
+        // Pattern 3: Look for consumer control usage page (0x0C)
+        if (data[1] == 0x0C || ((data[1] | (data[2] << 8)) >= 0x00B0 && (data[1] | (data[2] << 8)) <= 0x03FF)) {
+            ESP_LOGD(TAG, "Consumer control signature detected: %02x %02x %02x", data[0], data[1], data[2]);
+            hid_host_consumer_report_callback(data, length);
+            return;
+        }
+
+        // Pattern 4: Look for common function key patterns
+        // Common function key usually have non-zero values in data[2]
+        if (data[2] != 0x00) {
+            ESP_LOGD(TAG, "Possible function key (non-zero data[2]): %02x %02x %02x", data[0], data[1], data[2]);
+            hid_host_consumer_report_callback(data, length);
+            return;
+        }
+
+        // Pattern 5: Standard mouse reports usually have movement data
+        // So if there's button data but no movement, it might be a special key
+        if (data[0] != 0x00 && data[1] == 0x00 && data[2] == 0x00) {
+            ESP_LOGD(TAG, "Button press with no movement, might be special: %02x %02x %02x",
+                    data[0], data[1], data[2]);
+            hid_host_consumer_report_callback(data, length);
+            return;
+        }
+
+        // If we get here, it's probably a genuine mouse report
+        ESP_LOGD(TAG, "Treating as legitimate mouse report: %02x %02x %02x", data[0], data[1], data[2]);
     }
 
     // Bit-by-bit analysis of first few bytes
@@ -920,14 +1023,14 @@ static void hid_host_mouse_report_callback(const uint8_t *const data, const int 
         }
         // overlay from keyboard events on some mice
         actual_buttons |= button_overlay;
-    } else if (length >= 4) {
-        // Fallback to standard format for older mice
+    } else if (length >= 3) {
+        // Fallback to standard format for older mice or 3-button mice with no scroll wheel
         ESP_LOGD(TAG, "Using standard %d-byte mouse format", length);
 
         actual_buttons = data[0];  // Buttons in data[0]
         delta_x = (int8_t)data[1];
         delta_y = (int8_t)data[2];
-        scroll_y = (length >= 4) ? (int8_t)data[3] : 0;
+        scroll_y = (length >= 4) ? (int8_t)data[3] : 0;  // Only use scroll if 4+ bytes
 
         ESP_LOGD(TAG, "Standard parsed: buttons=0x%02x, delta=(%d,%d), scroll=%d",
                  actual_buttons, delta_x, delta_y, scroll_y);
@@ -1037,6 +1140,83 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
 
         // Call the appropriate callback based on the device protocol
         ESP_LOGD(TAG, "USB HID report: sub_class=%d, proto=%d, length=%d", dev_params.sub_class, dev_params.proto, data_length);
+
+        // Log all raw HID report data at the entry point for better debugging
+        if (data_length <= 16) { // Only log reasonably sized reports
+            char hex_buf[64] = {0};
+            char *hex_ptr = hex_buf;
+            for (int i = 0; i < data_length; i++) {
+                hex_ptr += sprintf(hex_ptr, "%02x ", data[i]);
+            }
+            ESP_LOGD(TAG, "HID RAW DATA: %s", hex_buf);
+        }
+
+        // Special filtering for 3-byte reports (consumer control, function keys, etc.)
+        if (data_length == 3) {
+            ESP_LOGD(TAG, "INTERFACE: Analyzing 3-byte report with first byte: 0x%02x", data[0]);
+
+            // Pattern 0: Standard mouse reports usually have first byte with mouse button bits (0-7)
+            // First bytes 0x00-0x07 are standard mouse buttons (combinations of left, right, middle)
+            bool is_standard_mouse = (data[0] <= 0x07);
+
+            // Mouse button presses (0x01-0x07) with no movement should go to mouse handler, not consumer control
+            if (is_standard_mouse && data[0] > 0) {
+                ESP_LOGD(TAG, "INTERFACE: Button press detected in 3-byte report: %02x %02x %02x - routing to mouse handler",
+                        data[0], data[1], data[2]);
+                hid_host_mouse_report_callback(data, data_length);
+                break;
+            }
+
+            // Pattern 1: First byte is 0x02 for common consumer control (multimedia) keys
+            // Now only matched for non-mouse-button reports (first byte > 0x07)
+            if (data[0] == 0x02 && !is_standard_mouse) {
+                ESP_LOGD(TAG, "INTERFACE: Detected consumer control report (0x02), routing directly");
+                hid_host_consumer_report_callback(data, data_length);
+                break;
+            }
+
+            // Pattern 2: Any report ID that's not a standard mouse report ID
+            if (!is_standard_mouse) {
+                ESP_LOGD(TAG, "INTERFACE: Non-standard mouse report ID: 0x%02x, likely function key", data[0]);
+
+                // Route all these to consumer control handler to let it try to interpret
+                ESP_LOGD(TAG, "INTERFACE: Routing possible function key to consumer handler: %02x %02x %02x",
+                        data[0], data[1], data[2]);
+                hid_host_consumer_report_callback(data, data_length);
+                break;
+            }
+
+            // Pattern 3: Look for consumer control usage page (0x0C)
+            if (data[1] == 0x0C || ((data[1] | (data[2] << 8)) >= 0x00B0 && (data[1] | (data[2] << 8)) <= 0x03FF)) {
+                ESP_LOGD(TAG, "INTERFACE: Consumer control signature detected: %02x %02x %02x", data[0], data[1], data[2]);
+                hid_host_consumer_report_callback(data, data_length);
+                break;
+            }
+
+            // Pattern 4: Common function key patterns
+            // Common function key usually have non-zero values in data[2]
+            if (data[2] != 0x00) {
+                ESP_LOGD(TAG, "INTERFACE: Possible function key (non-zero data[2]): %02x %02x %02x", data[0], data[1], data[2]);
+                hid_host_consumer_report_callback(data, data_length);
+                break;
+            }
+
+            // Pattern 5: Standard mouse reports usually have movement data
+            // So if there's button data but no movement, it might be a special key
+            if (data[0] != 0x00 && data[1] == 0x00 && data[2] == 0x00) {
+                ESP_LOGD(TAG, "INTERFACE: Button press with no movement, might be special: %02x %02x %02x",
+                        data[0], data[1], data[2]);
+                hid_host_consumer_report_callback(data, data_length);
+                break;
+            }
+
+            // If we get here, it's probably a legitimate mouse report
+            ESP_LOGD(TAG, "INTERFACE: Treating as legitimate mouse report: %02x %02x %02x", data[0], data[1], data[2]);
+            goto normal_routing;
+        }
+
+        normal_routing:
+
         if (HID_SUBCLASS_BOOT_INTERFACE == dev_params.sub_class) {
             if (HID_PROTOCOL_KEYBOARD == dev_params.proto) {
                 hid_host_keyboard_report_callback(data, data_length);
@@ -1047,6 +1227,7 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
             hid_host_generic_report_callback(data, data_length);
         }
         break;
+
 
     case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "HID Device, protocol '%s' DISCONNECTED",
@@ -1309,6 +1490,29 @@ static void dump_usb_device_descriptors(hid_host_device_handle_t device_handle)
 
 
 /**
+ * @brief Release all input reports (keyboard, mouse, consumer control)
+ *
+ * Called when USB device disconnects or has errors to prevent stuck keys
+ */
+static void release_all_inputs(void) {
+    ESP_LOGI(TAG, "Releasing all inputs due to USB device disconnect or error");
+
+    // 1. Release all keyboard keys by sending empty keyboard report
+    uint8_t empty_keyboard_report[8] = {0}; // Report ID + modifier + 6 keys
+    hid_host_keyboard_report_callback(empty_keyboard_report, sizeof(empty_keyboard_report));
+
+    // 2. Release mouse buttons with empty mouse report
+    uint8_t empty_mouse_report[4] = {0}; // Report ID + buttons + X + Y
+    hid_host_mouse_report_callback(empty_mouse_report, sizeof(empty_mouse_report));
+
+    // 3. Release any multimedia/consumer control keys
+    uint8_t empty_consumer_report[3] = {0}; // Report ID + 16-bit usage code
+    hid_host_consumer_report_callback(empty_consumer_report, sizeof(empty_consumer_report));
+
+    ESP_LOGI(TAG, "All inputs released");
+}
+
+/**
  * @brief USB HID Host Device event
  *
  * @param[in] hid_device_handle  HID Device handle
@@ -1334,9 +1538,6 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
     case HID_HOST_DRIVER_EVENT_CONNECTED:
         ESP_LOGI(TAG, "HID Device, protocol '%s' CONNECTED",
                  hid_proto_name_str[dev_params.proto]);
-
-        // Dump detailed descriptor information for analysis
-        dump_usb_device_descriptors(hid_device_handle);
 
         // Configure the device with the interface callback
         const hid_host_device_config_t dev_config = {
@@ -1374,11 +1575,21 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
             ESP_LOGI(TAG, "Initializing keyboard LED state...");
             initialize_led_state();
         }
-
         ESP_LOGI(TAG, "HID device connected and ready");
         break;
 
     default:
+        // For any other event (assumed to be disconnection or errors), release all inputs
+        if (hid_device.connected && hid_device_handle == hid_device.handle) {
+            ESP_LOGW(TAG, "HID Device event %d - assuming device disconnection", event);
+
+            // Release all pressed inputs to prevent stuck keys/buttons
+            release_all_inputs();
+
+            // Mark device as disconnected
+            hid_device.connected = false;
+            hid_device.handle = NULL;
+        }
         break;
     }
 }
@@ -1390,6 +1601,9 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
  */
 static void usb_host_task(void *arg)
 {
+    // Descriptor dumps have been disabled to improve stability
+    // We don't need the descriptors for normal operation
+
     // Timeout for USB host library events handling - increased for robustness
     const TickType_t event_timeout = 100 / portTICK_PERIOD_MS;
 
@@ -1413,6 +1627,13 @@ static void usb_host_task(void *arg)
             }
         } else if (ret != ESP_ERR_TIMEOUT) {
             ESP_LOGW(TAG, "USB host lib handle events failed: %s", esp_err_to_name(ret));
+
+            // If we have a connected device and encounter USB host errors, release all inputs
+            if (hid_device.connected) {
+                ESP_LOGW(TAG, "USB host error while device connected - releasing all inputs");
+                release_all_inputs();
+            }
+
             // Add a longer delay to prevent busy loop on error and allow recovery
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
@@ -1439,6 +1660,35 @@ static void usb_host_task(void *arg)
                     ESP_LOGE(TAG, "Unknown event group: %d", event.event_group);
                     break;
             }
+        }
+
+        // Device timeout detection - if we have a device but haven't received data in a while,
+        // assume it's unresponsive and release all inputs
+        static uint32_t inactive_count = 0;
+        static const uint32_t DEVICE_INACTIVITY_THRESHOLD = 500; // ~0.5 seconds
+
+        if (hid_device.connected) {
+            inactive_count++;
+
+            if (inactive_count >= DEVICE_INACTIVITY_THRESHOLD) {
+                // Check if device is still responsive by attempting a control transfer
+                // for keyboard LED state (harmless if it succeeds, will error if device is gone)
+                if (hid_device.params.proto == HID_PROTOCOL_KEYBOARD) {
+                    esp_err_t dev_check = usb_keyboard_set_led_state(0); // Send dummy LED state command
+
+                    if (dev_check != ESP_OK) {
+                        ESP_LOGW(TAG, "USB device timed out or unresponsive - releasing all inputs");
+                        release_all_inputs();
+
+                        // Don't mark device as disconnected yet, let the normal error handling do that
+                        // when disconnect is actually detected
+                    }
+                }
+
+                inactive_count = 0;  // Reset counter after check
+            }
+        } else {
+            inactive_count = 0;  // Reset when no device is connected
         }
 
         // Add a small delay to prevent CPU spinning
@@ -1637,4 +1887,33 @@ esp_err_t usb_host_send_keyboard_output_report(uint8_t led_state)
     ESP_LOGI(TAG, "BLE->USB LED: Forwarding LED command from BLE host");
     // Simply forward to the unified USB LED state function
     return usb_keyboard_set_led_state(led_state);
+}
+
+/**
+ * @brief Handle consumer control usage code
+ *
+ * Sends the consumer control event to the BLE HID stack using the consumer control
+ * report descriptor (Report ID 3). Also forwards via UART protocol when
+ * this board is active and input routing is on.
+ *
+ * @param usage_code Consumer control usage code from USB HID report
+ * @return esp_err_t ESP_OK on success, error code otherwise
+ */
+static esp_err_t handle_consumer_control(uint16_t usage_code)
+{
+    ESP_LOGI(TAG, "Consumer control code 0x%04x forwarding to BLE HID", usage_code);
+
+    // 1. Forward to the BLE HID stack (will handle standard HID consumer control report)
+    esp_err_t ble_ret = ble_hid_consumer_control(usage_code);
+    if (ble_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send consumer control to BLE: %s", esp_err_to_name(ble_ret));
+    }
+
+    // 2. Forward to UART for the neighbor ESP32 module
+    esp_err_t uart_ret = uart_protocol_forward_consumer_control(usage_code);
+    if (uart_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to forward consumer control to UART: %s", esp_err_to_name(uart_ret));
+    }
+
+    return (ble_ret == ESP_OK) ? ESP_OK : ble_ret; // Prioritize BLE status for return
 }

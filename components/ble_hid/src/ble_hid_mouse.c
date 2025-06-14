@@ -84,7 +84,7 @@ static bool can_send_now(void);
 static void update_rate_limit_on_success(void);
 static void update_rate_limit_on_failure(void);
 
-// Combined Mouse+Keyboard HID Report Descriptor
+// Combined Mouse+Keyboard+Consumer Control HID Report Descriptor
 static const uint8_t combined_hid_report_map[] = {
     // Mouse Collection - Report ID 1
     0x05, 0x01,        // Usage Page (Generic Desktop)
@@ -140,7 +140,7 @@ static const uint8_t combined_hid_report_map[] = {
     0x19, 0x00,        //   Usage Minimum (0x00)
     0x29, 0x65,        //   Usage Maximum (0x65)
     0x81, 0x00,        //   Input (Data,Array,Abs)
-    
+
     // Keyboard LED Output Report
     0x05, 0x08,        //   Usage Page (LEDs)
     0x19, 0x01,        //   Usage Minimum (Num Lock)
@@ -151,6 +151,20 @@ static const uint8_t combined_hid_report_map[] = {
     0x95, 0x01,        //   Report Count (1)
     0x75, 0x03,        //   Report Size (3) - Padding
     0x91, 0x01,        //   Output (Const,Array,Abs)
+    0xC0,              // End Collection
+
+    // Consumer Control Collection - Report ID 3
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x03,        //   Report ID (3)
+    0x15, 0x00,        //   Logical Min 0
+    0x26, 0xFF, 0x03,  //   Logical Max 0x03FF (10-bit)
+    0x19, 0x00,        //   Usage Min 0
+    0x2A, 0xFF, 0x03,  //   Usage Max 0x03FF
+    0x75, 0x10,        //   Report Size 16 bits
+    0x95, 0x01,        //   Report Count 1
+    0x81, 0x00,        //   Input (Data,Array,Abs)
     0xC0,              // End Collection
 };
 
@@ -193,6 +207,9 @@ static uint8_t keyboard_input_report_data[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};  // 
 // Keyboard output report data with Report ID (for LED control)
 static uint8_t keyboard_output_report_data[2] = {0, 0};  // report_id, led_state
 
+// Consumer control report data - 16-bit usage code
+static uint8_t consumer_input_report_data[2] = {0x00, 0x00};  // report_id, usage_code (16-bit)
+
 // Boot Protocol mouse report data (same format as regular mouse report)
 static uint8_t boot_mouse_input_report[4] = {0, 0, 0, 0};   // buttons, X, Y, wheel
 
@@ -200,20 +217,10 @@ static uint8_t boot_mouse_input_report[4] = {0, 0, 0, 0};   // buttons, X, Y, wh
 static uint8_t boot_keyboard_input_report[8] = {0, 0, 0, 0, 0, 0, 0, 0};   // modifier, reserved, key1-6
 
 // Report Reference Descriptors for Report characteristics
-static const uint8_t mouse_report_reference[] = {
-    HID_REPORT_ID_MOUSE,  // Report ID (1)
-    0x01                  // Report Type (1 = Input Report)
-};
-
-static const uint8_t keyboard_report_reference[] = {
-    HID_REPORT_ID_KEYBOARD,  // Report ID (2)
-    0x01                     // Report Type (1 = Input Report)
-};
-
-static const uint8_t keyboard_output_report_reference[] = {
-    HID_REPORT_ID_KEYBOARD,  // Report ID (2) - Same as input report
-    0x02                     // Report Type (2 = Output Report)
-};
+static const uint8_t mouse_report_reference[] = {0x01, 0x01};       // Report ID 1 (Input)
+static const uint8_t keyboard_report_reference[] = {0x02, 0x01};   // Report ID 2 (Input)
+static const uint8_t keyboard_output_report_reference[] = {0x02, 0x02};  // Report ID 2 (Output)
+static const uint8_t consumer_report_reference[] = {0x03, 0x01};  // Report ID 3 (Input)
 
 /**
  * Combined HID Report Map access callback
@@ -279,15 +286,15 @@ static int keyboard_output_report_access(uint16_t conn_handle, uint16_t attr_han
             ESP_LOGD(TAG, "Read keyboard output report");
             rc = os_mbuf_append(ctxt->om, keyboard_output_report_data, sizeof(keyboard_output_report_data));
             return (rc == 0) ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            
+
         case BLE_GATT_ACCESS_OP_WRITE_CHR:
             ESP_LOGI(TAG, "Write keyboard output report from conn_handle=0x%04x", conn_handle);
             ESP_LOGI(TAG, "MBUF length: %d bytes", OS_MBUF_PKTLEN(ctxt->om));
-            
+
             // Get the length of the incoming data
             int data_len = OS_MBUF_PKTLEN(ctxt->om);
             ESP_LOGI(TAG, "Incoming data length: %d bytes", data_len);
-            
+
             if (data_len == 1) {
                 // BLE HID style: no Report ID in data (implied by characteristic)
                 uint8_t led_state;
@@ -296,23 +303,23 @@ static int keyboard_output_report_access(uint16_t conn_handle, uint16_t attr_han
                     ESP_LOGE(TAG, "Failed to extract 1-byte LED state: %d", rc);
                     return BLE_ATT_ERR_INSUFFICIENT_RES;
                 }
-                
+
                 ESP_LOGI(TAG, "BLE HID output (1 byte): led_state=0x%02x", led_state);
-                ESP_LOGI(TAG, "LED state bits: 7:%d 6:%d 5:%d 4:%d 3:%d 2:%d 1:%d 0:%d", 
+                ESP_LOGI(TAG, "LED state bits: 7:%d 6:%d 5:%d 4:%d 3:%d 2:%d 1:%d 0:%d",
                          (led_state >> 7) & 1, (led_state >> 6) & 1, (led_state >> 5) & 1, (led_state >> 4) & 1,
                          (led_state >> 3) & 1, (led_state >> 2) & 1, (led_state >> 1) & 1, (led_state >> 0) & 1);
-                
+
                 // Update our local copy (no Report ID)
                 keyboard_output_report_data[0] = HID_REPORT_ID_KEYBOARD; // Set Report ID
                 keyboard_output_report_data[1] = led_state;
-                
+
                 // Forward to keyboard module
                 esp_err_t err = ble_hid_keyboard_handle_output_report(conn_handle, &led_state, 1);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to handle keyboard output report: %s", esp_err_to_name(err));
                     return BLE_ATT_ERR_UNLIKELY;
                 }
-                
+
             } else if (data_len == 2) {
                 // USB HID style: Report ID + data
                 uint8_t report_data[2];
@@ -321,30 +328,30 @@ static int keyboard_output_report_access(uint16_t conn_handle, uint16_t attr_han
                     ESP_LOGE(TAG, "Failed to extract 2-byte report data: %d", rc);
                     return BLE_ATT_ERR_INSUFFICIENT_RES;
                 }
-                
-                ESP_LOGI(TAG, "USB HID output (2 bytes): report_id=%d, led_state=0x%02x", 
+
+                ESP_LOGI(TAG, "USB HID output (2 bytes): report_id=%d, led_state=0x%02x",
                          report_data[0], report_data[1]);
-                ESP_LOGI(TAG, "LED state bits: 7:%d 6:%d 5:%d 4:%d 3:%d 2:%d 1:%d 0:%d", 
+                ESP_LOGI(TAG, "LED state bits: 7:%d 6:%d 5:%d 4:%d 3:%d 2:%d 1:%d 0:%d",
                          (report_data[1] >> 7) & 1, (report_data[1] >> 6) & 1, (report_data[1] >> 5) & 1, (report_data[1] >> 4) & 1,
                          (report_data[1] >> 3) & 1, (report_data[1] >> 2) & 1, (report_data[1] >> 1) & 1, (report_data[1] >> 0) & 1);
-                
+
                 // Update our local copy
                 memcpy(keyboard_output_report_data, report_data, sizeof(report_data));
-                
+
                 // Forward to keyboard module
                 esp_err_t err = ble_hid_keyboard_handle_output_report(conn_handle, &report_data[1], 1);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to handle keyboard output report: %s", esp_err_to_name(err));
                     return BLE_ATT_ERR_UNLIKELY;
                 }
-                
+
             } else {
                 ESP_LOGE(TAG, "Invalid output report length: %d (expected 1 or 2)", data_len);
                 return BLE_ATT_ERR_INVALID_PDU;
             }
-            
+
             return 0;
-            
+
         default:
             return BLE_ATT_ERR_UNLIKELY;
     }
@@ -500,13 +507,32 @@ static int keyboard_report_reference_access(uint16_t conn_handle, uint16_t attr_
  * Keyboard Output Report Reference Descriptor access callback
  */
 static int keyboard_output_report_reference_access(uint16_t conn_handle, uint16_t attr_handle,
-                                                  struct ble_gatt_access_ctxt *ctxt, void *arg)
+                                                   struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     int rc;
     switch (ctxt->op) {
         case BLE_GATT_ACCESS_OP_READ_DSC:
             ESP_LOGD(TAG, "Read keyboard output report reference descriptor");
-            rc = os_mbuf_append(ctxt->om, keyboard_output_report_reference, sizeof(keyboard_output_report_reference));
+            rc = os_mbuf_append(ctxt->om, keyboard_output_report_reference,
+                               sizeof(keyboard_output_report_reference));
+            return (rc == 0) ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        default:
+            return BLE_ATT_ERR_UNLIKELY;
+    }
+}
+
+/**
+ * Consumer Control Report Reference Descriptor access callback
+ */
+static int consumer_report_reference_access(uint16_t conn_handle, uint16_t attr_handle,
+                                           struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    int rc;
+    switch (ctxt->op) {
+        case BLE_GATT_ACCESS_OP_READ_DSC:
+            ESP_LOGD(TAG, "Read consumer control report reference descriptor");
+            rc = os_mbuf_append(ctxt->om, consumer_report_reference,
+                               sizeof(consumer_report_reference));
             return (rc == 0) ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         default:
             return BLE_ATT_ERR_UNLIKELY;
@@ -687,6 +713,24 @@ static const struct ble_gatt_svc_def combined_hid_svcs[] = {
                 },
             },
             {
+                // Consumer Control Input Report characteristic
+                .uuid = &hid_report_uuid.u,
+                .access_cb = mouse_hid_report_access, // Reuse access function since it's just a pass-through
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &ble_hid_svc_char_handles[HANDLE_CONSUMER_INPUT_REPORT],
+                .descriptors = (struct ble_gatt_dsc_def[]) {
+                    {
+                        // Report Reference Descriptor for Consumer Control
+                        .uuid = &report_reference_uuid.u,
+                        .access_cb = consumer_report_reference_access,
+                        .att_flags = BLE_ATT_F_READ,
+                    },
+                    {
+                        0, // No more descriptors
+                    },
+                },
+            },
+            {
                 0, // No more characteristics
             },
         },
@@ -782,6 +826,7 @@ esp_err_t ble_hid_mouse_init(void)
     ESP_LOGI(TAG, "  Combined Report Map handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_HID_REPORT_MAP]);
     ESP_LOGI(TAG, "  Mouse Input Report handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_MOUSE_INPUT_REPORT]);
     ESP_LOGI(TAG, "  Keyboard Input Report handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_KEYBOARD_INPUT_REPORT]);
+    ESP_LOGI(TAG, "  Consumer Control Input Report handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_CONSUMER_INPUT_REPORT]);
     ESP_LOGI(TAG, "  Protocol Mode handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_HID_PROTOCOL_MODE]);
     ESP_LOGI(TAG, "  Control Point handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_HID_CONTROL_POINT]);
     ESP_LOGI(TAG, "  Keyboard Output Report handle: 0x%04x", ble_hid_svc_char_handles[HANDLE_KEYBOARD_OUTPUT_REPORT]);
@@ -1500,4 +1545,54 @@ void ble_hid_mouse_log_stats(void) {
     ESP_LOGI(TAG, "Time since last send: %llu us", time_since_last_send);
     ESP_LOGI(TAG, "Can send now: %s", can_send_now() ? "YES" : "NO");
     ESP_LOGI(TAG, "===============================");
+}
+
+/**
+ * @brief Send a consumer control report over BLE HID
+ *
+ * @param usage_code The 16-bit HID consumer control usage code
+ * @return ESP_OK on success or an error code
+ */
+esp_err_t ble_hid_consumer_control(uint16_t usage_code) {
+#if BLE_HID_DEBUG_DISABLE_REPORTING
+    ESP_LOGI(TAG, "[DEBUG] BLE DISABLED - Consumer control report: usage=0x%04x", usage_code);
+    return ESP_OK;
+#else
+    ESP_LOGD(TAG, "Sending consumer control report: usage=0x%04x", usage_code);
+
+    if (!ble_hid_is_connected()) {
+        ESP_LOGW(TAG, "BLE not connected, cannot send consumer control report");
+        return ESP_FAIL;
+    }
+
+    if (ble_hid_svc_char_handles[HANDLE_CONSUMER_INPUT_REPORT] == 0) {
+        ESP_LOGW(TAG, "Consumer input report handle not initialized");
+        return ESP_FAIL;
+    }
+
+    // Fill the consumer control report - no Report ID needed in BLE reports
+    // as they are identified by the characteristic handle
+    consumer_input_report_data[0] = usage_code & 0xFF;         // Low byte
+    consumer_input_report_data[1] = (usage_code >> 8) & 0xFF;  // High byte
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(consumer_input_report_data, sizeof(consumer_input_report_data));
+    if (om == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate mbuf for consumer control report");
+        return ESP_ERR_NO_MEM;
+    }
+
+    // Send the report using the dedicated consumer control input report characteristic
+    ESP_LOGD(TAG, "Sending consumer control report with handle 0x%04x", ble_hid_svc_char_handles[HANDLE_CONSUMER_INPUT_REPORT]);
+    int rc = ble_gattc_notify_custom(ble_hid_dev_state.conn_handle,
+                                    ble_hid_svc_char_handles[HANDLE_CONSUMER_INPUT_REPORT],
+                                    om);
+
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to send consumer control report: %d", rc);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGD(TAG, "Consumer control report sent successfully: usage=0x%04x", usage_code);
+    return ESP_OK;
+#endif
 }

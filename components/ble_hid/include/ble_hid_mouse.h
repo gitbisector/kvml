@@ -34,7 +34,9 @@ enum ble_hid_attr_handles {
 
     HANDLE_KEYBOARD_OUTPUT_REPORT,      // 12 - Keyboard output report (LED control)
     
-    HANDLE_BLE_HID_COUNT                // 13 - Total handle count
+    HANDLE_CONSUMER_INPUT_REPORT,       // 13 - Consumer control input report
+
+    HANDLE_BLE_HID_COUNT                // 14 - Total handle count
 };
 
 // Global handle array - must be externally accessible for NimBLE
@@ -137,6 +139,14 @@ void ble_hid_boot_mouse_send_report(uint8_t conn_idx, const uint8_t *report, siz
  * @param len Length of the report data in bytes
  */
 void ble_hid_boot_keyboard_send_report(uint8_t conn_idx, const uint8_t *report, size_t len);
+
+/**
+ * @brief Send a consumer control report over BLE HID
+ * 
+ * @param usage_code The 16-bit HID consumer control usage code
+ * @return ESP_OK on success or an error code
+ */
+esp_err_t ble_hid_consumer_control(uint16_t usage_code);
 
 #ifdef __cplusplus
 }

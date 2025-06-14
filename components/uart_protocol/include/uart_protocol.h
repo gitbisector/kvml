@@ -61,6 +61,7 @@ extern "C" {
 #define UART_CMD_USB_MOUSE      0x10                    // USB mouse HID report
 #define UART_CMD_USB_KEYBOARD   0x11                    // USB keyboard HID report
 #define UART_CMD_BLE_LED_STATE  0x12                    // BLE keyboard LED state (output report)
+#define UART_CMD_CONSUMER_CTRL  0x13                    // Consumer control HID report
 
 // Host switching coordination commands
 #define UART_CMD_HOST_SWITCH_REQUEST  0x20              // Request host switching
@@ -153,6 +154,14 @@ esp_err_t uart_protocol_forward_mouse_report(const uint8_t *report_data, size_t 
  * @return ESP_OK if sent successfully, error code otherwise
  */
 esp_err_t uart_protocol_forward_keyboard_report(const uint8_t *report_data, size_t report_length);
+
+/**
+ * @brief Forward consumer control HID report to neighbor board (fire-and-forget)
+ *
+ * @param usage_code 16-bit HID consumer control usage code
+ * @return ESP_OK if sent successfully, error code otherwise
+ */
+esp_err_t uart_protocol_forward_consumer_control(uint16_t usage_code);
 
 /**
  * @brief Forward BLE keyboard LED state to neighbor board (fire-and-forget)
